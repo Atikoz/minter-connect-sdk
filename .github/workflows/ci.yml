@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20.19 — мінімум із engines (вимога @noble/hashes@2); 22 — поточна LTS.
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      # Тарбол — це те, що реально побачить інтегратор. Перевіряємо не збірку,
+      # а САМЕ його вміст: тестові файли й симуляція гаманця не мають потрапити
+      # в пакет навіть якщо хтось випадково розширить rootDir чи files.
+      - name: npm pack --dry-run
+        run: npm pack --dry-run
+
+      - name: у тарболі немає тестів
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e "
+            const files = require('./pack.json')[0].files.map((f) => f.path);
+            console.log(files.join('\n'));
+            const leaked = files.filter((f) => /(^|\/)(test|tests|__tests__)\//.test(f) || /\.(test|spec)\./.test(f) || /e2e/i.test(f));
+            if (leaked.length) { console.error('Тестові файли в тарболі:', leaked); process.exit(1); }
+            if (!files.includes('dist/index.js') || !files.includes('dist/index.d.ts')) { console.error('У тарболі немає точки входу'); process.exit(1); }
+            if (!files.includes('LICENSE')) { console.error('У тарболі немає LICENSE'); process.exit(1); }
+          "

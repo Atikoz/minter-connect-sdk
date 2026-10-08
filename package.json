@@ -1,0 +1,59 @@
+{
+  "name": "minter-connect-sdk",
+  "version": "1.0.0",
+  "description": "Non-custodial SDK for connecting DEX apps to Minter wallets over a pairing relay: the user confirms and signs in their own wallet, your app never sees the private key.",
+  "keywords": [
+    "minter",
+    "wallet",
+    "dex",
+    "web3",
+    "non-custodial",
+    "telegram-mini-app",
+    "walletconnect-like"
+  ],
+  "license": "ISC",
+  "author": "VVG",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CHANGE_ME/minter-connect-sdk.git"
+  },
+  "homepage": "https://github.com/CHANGE_ME/minter-connect-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/CHANGE_ME/minter-connect-sdk/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "tsx test/e2e-manual.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "@noble/secp256k1": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}
