@@ -1,31 +1,31 @@
 # minter-connect-sdk
 
-SDK для сайтів (DEX), щоб підключатися до Minter-гаманців через pairing-relay
-без сид-фрази й приватного ключа на стороні сайту. Користувач підтверджує
-підключення й підписує транзакції у своєму гаманці (Telegram Mini App), а ваш
-застосунок ніколи не бачить ані ключа, ані сид-фрази.
+SDK для сайтов (DEX), чтобы подключаться к Minter-кошелькам через pairing-relay
+без сид-фразы и приватного ключа на стороне сайта. Пользователь подтверждает
+подключение и подписывает транзакции в своём кошельке (Telegram Mini App), а
+ваше приложение никогда не видит ни ключа, ни сид-фразы.
 
-> **2.0 — breaking change.** SDK приведено до relay з manifest і `dexToken`
-> (контракт: `minter-backend/docs/API.md`). Що змінилось: `dexName` →
+> **2.0 — breaking change.** SDK приведён к relay с manifest и `dexToken`
+> (контракт: `minter-backend/docs/API.md`). Что изменилось: `dexName` →
 > `manifestUrl`, `walletBotUsername` → `walletAppLink`, `sign(txParams)` →
 > `sendTransaction({ to, amount, coin })`, `SerializedSession` v1 → v2.
-> Сесії 1.x не відновлюються, потрібне нове підключення.
+> Сессии 1.x не восстанавливаются, нужно новое подключение.
 
-## Вимоги
+## Требования
 
-- **Node.js ≥ 20.19.0** (вимога `@noble/hashes@2`) або сучасний браузер із Web Crypto API.
-  У браузері сторінка має бути в безпечному контексті (HTTPS або `localhost`),
-  інакше `crypto.subtle` недоступний і SDK одразу кине `crypto_unavailable`.
-- Relay протоколу minter-connect з manifest і `dexToken` (гілка `feat/wallet-dex-auth` бекенду або новіша).
-- Manifest вашого сайту за https-адресою (див. [«Manifest»](#manifest)).
+- **Node.js ≥ 20.19.0** (требование `@noble/hashes@2`) или современный браузер с Web Crypto API.
+  В браузере страница должна быть в безопасном контексте (HTTPS или `localhost`),
+  иначе `crypto.subtle` недоступен и SDK сразу бросит `crypto_unavailable`.
+- Relay протокола minter-connect с manifest и `dexToken` (ветка `feat/wallet-dex-auth` бэкенда или новее).
+- Manifest вашего сайта по https-адресу (см. [«Manifest»](#manifest)).
 
-## Встановлення
+## Установка
 
 ```bash
 npm install minter-connect-sdk
 ```
 
-## Швидкий старт
+## Быстрый старт
 
 ```typescript
 import { MinterConnectClient, MinterConnectError } from 'minter-connect-sdk';
@@ -33,233 +33,236 @@ import { MinterConnectClient, MinterConnectError } from 'minter-connect-sdk';
 const client = new MinterConnectClient({
   relayUrl: 'https://relay.example.com',
   manifestUrl: 'https://dex.example/minter-connect-manifest.json',
-  walletAppLink: 'https://t.me/MinterWalletBot/app', // Direct Link Mini App з BotFather
+  walletAppLink: 'https://t.me/MinterWalletBot/app', // Direct Link Mini App из BotFather
 });
 
-// 1. Створюємо сесію і показуємо користувачу посилання (кнопка) або QR (десктоп)
+// 1. Создаём сессию и показываем пользователю ссылку (кнопка) или QR (десктоп)
 const session = await client.createSession();
 showConnect(session.deepLink); // https://t.me/MinterWalletBot/app?startapp=connect_<sessionId>
 
-// 2. Чекаємо, поки користувач підтвердить підключення
+// 2. Ждём, пока пользователь подтвердит подключение
 const { walletAddress, expiresAt } = await session.waitForConnection();
-// SDK уже перевірив доказ handshake: підписано НАШ домен, адреса виведена з
-// ключа гаманця, а підпис покриває ключ шифрування каналу.
+// SDK уже проверил доказательство handshake: подписан НАШ домен, адрес выведен
+// из ключа кошелька, а подпись покрывает ключ шифрования канала.
 
-// 3. ОБОВ'ЯЗКОВО покажіть адресу користувачу: сесію підтверджує той, хто першим
-//    відкрив посилання (див. «Хто підтверджує сесію»).
+// 3. ОБЯЗАТЕЛЬНО покажите адрес пользователю: сессию подтверждает тот, кто первым
+//    открыл ссылку (см. «Кто подтверждает сессию»).
 await askUserToConfirmAddress(walletAddress);
 
-// 4. Просимо гаманець підписати переказ
+// 4. Просим кошелёк подписать перевод
 try {
   const signedTxHex = await session.sendTransaction({ to: 'Mx…', amount: '1.5', coin: 'BIP' });
-  await broadcast(signedTxHex); // у мережу відправляє сайт, див. «Відправка транзакції»
+  await broadcast(signedTxHex); // в сеть отправляет сайт, см. «Отправка транзакции»
 } catch (err) {
   if (err instanceof MinterConnectError) {
     if (err.requiresReconnect) {
-      // сесії більше немає: показуємо кнопку «підключити гаманець» заново
+      // сессии больше нет: показываем кнопку «подключить кошелёк» заново
     } else if (err.code === 'signing_rejected') {
-      // користувач сказав «ні», це не помилка застосунку
+      // пользователь сказал «нет», это не ошибка приложения
     }
   }
   throw err;
 } finally {
-  session.close(); // зупиняє поллінг, якщо щось ще лишилось у польоті
+  session.close(); // останавливает поллинг, если что-то ещё осталось в полёте
 }
 ```
 
-## Як це працює
+## Как это работает
 
 ```
 Сайт      POST /sessions {dexPublicKeyHex, manifestUrl}  → sessionId, dexToken
-Сайт      показує <walletAppLink>?startapp=connect_<sessionId> (QR / кнопка)
-Гаманець  сам завантажує manifestUrl, показує юзеру name + host(manifest.url)
-Гаманець  підтверджує: підписує handshake з цим доменом
-Сайт      GET /sessions/:id [Bearer dexToken] → перевіряє доказ зі СВОЇМ доменом
+Сайт      показывает <walletAppLink>?startapp=connect_<sessionId> (QR / кнопка)
+Кошелёк   сам загружает manifestUrl, показывает юзеру name + host(manifest.url)
+Кошелёк   подтверждает: подписывает handshake с этим доменом
+Сайт      GET /sessions/:id [Bearer dexToken] → проверяет доказательство со СВОИМ доменом
 Сайт      POST /sessions/:id/requests [Bearer] (шифротекст { v:1, method, params })
-Гаманець  показує переказ юзеру, підписує, повертає зашифрований результат
-Сайт      GET /requests/:reqId [Bearer] → signedTxHex → сам відправляє в мережу
+Кошелёк   показывает перевод юзеру, подписывает, возвращает зашифрованный результат
+Сайт      GET /requests/:reqId [Bearer] → signedTxHex → сам отправляет в сеть
 ```
 
-1. `createSession()` створює pairing-сесію і отримує `dexToken`, токен доступу
-   сайту до цієї сесії. SDK шле його як `Authorization: Bearer` на всі маршрути
-   сайту. У `deepLink` токен не потрапляє ніколи.
-2. Користувач відкриває `deepLink`. Гаманець сам завантажує ваш manifest і
-   показує назву та домен саме звідти, а не зі слів relay.
-3. `waitForConnection()` поллить relay, поки сесія не стане `connected`,
-   перевіряє доказ handshake і виводить ключ каналу.
-4. `sendTransaction()` шифрує запит, ставить його в чергу relay, чекає підпису й
-   повертає `signedTxHex`.
+1. `createSession()` создаёт pairing-сессию и получает `dexToken`, токен доступа
+   сайта к этой сессии. SDK шлёт его как `Authorization: Bearer` на все маршруты
+   сайта. В `deepLink` токен не попадает никогда.
+2. Пользователь открывает `deepLink`. Кошелёк сам загружает ваш manifest и
+   показывает название и домен именно оттуда, а не со слов relay.
+3. `waitForConnection()` опрашивает relay, пока сессия не станет `connected`,
+   проверяет доказательство handshake и выводит ключ канала.
+4. `sendTransaction()` шифрует запрос, ставит его в очередь relay, ждёт подписи и
+   возвращает `signedTxHex`.
 
-Уся криптографія (ECDH, AES-256-GCM, перевірка підписів secp256k1) працює
-всередині SDK. Relay бачить лише шифротекст.
+Вся криптография (ECDH, AES-256-GCM, проверка подписей secp256k1) работает
+внутри SDK. Relay видит только шифротекст.
 
 ## Manifest
 
-Розмістіть JSON на своєму домені й передайте його адресу як `manifestUrl`:
+Разместите JSON на своём домене и передайте его адрес как `manifestUrl`:
 
 ```json
 { "url": "https://dex.example", "name": "Dex", "iconUrl": "https://dex.example/icon.png" }
 ```
 
-Вимоги relay (інакше `createSession()` кине `invalid_manifest`, причина в `err.relayError`):
+Требования relay (иначе `createSession()` бросит `invalid_manifest`, причина в `err.relayError`):
 
-| Вимога | relayError при порушенні |
+| Требование | relayError при нарушении |
 |---|---|
-| `manifestUrl`, `url`, `iconUrl` тільки `https`, без логіна/пароля, не на приватні адреси | `invalid_manifest_url` / `manifest_invalid` |
-| `URL.host` у `url` **дорівнює** host у `manifestUrl` | `manifest_domain_mismatch` |
-| `name` 1..64 символи після trim; розмір до 16 КБ; без редиректів | `manifest_invalid` / `manifest_unreachable` |
-| Сервер віддає manifest relay | `manifest_unreachable` |
+| `manifestUrl`, `url`, `iconUrl` только `https`, без логина/пароля, не на приватные адреса | `invalid_manifest_url` / `manifest_invalid` |
+| `URL.host` в `url` **равен** host в `manifestUrl` | `manifest_domain_mismatch` |
+| `name` 1..64 символа после trim; размер до 16 КБ; без редиректов | `manifest_invalid` / `manifest_unreachable` |
+| Сервер отдаёт manifest relay | `manifest_unreachable` |
 
-Гаманець завантажує manifest **з браузера** (Telegram WebView), тому сервер має
-віддавати заголовок `Access-Control-Allow-Origin: *`. Без нього relay сесію
-створить, а гаманець показати її не зможе.
+Кошелёк загружает manifest **из браузера** (Telegram WebView), поэтому сервер
+должен отдавать заголовок `Access-Control-Allow-Origin: *`. Без него relay
+сессию создаст, а кошелёк показать её не сможет.
 
-Host із `manifest.url` (нижній регістр, порт лише нестандартний: `dex.example`,
-`dex.example:8443`) і є доменом, який гаманець підписує в handshake. Для
-локальної розробки з relay у дев-режимі (`WEBHOOK_ALLOW_PRIVATE_NETWORK=true`)
-SDK приймає й `http://localhost:<port>`.
+Host из `manifest.url` (нижний регистр, порт только нестандартный: `dex.example`,
+`dex.example:8443`) и есть домен, который кошелёк подписывает в handshake. Для
+локальной разработки с relay в dev-режиме (`WEBHOOK_ALLOW_PRIVATE_NETWORK=true`)
+SDK принимает и `http://localhost:<port>`.
 
-## Хто підтверджує сесію
+## Кто подтверждает сессию
 
-Сесію підтверджує **той, хто першим** надішле валідне підтвердження. Посилання з
-`sessionId` (QR, кнопка, скріншот) не секрет: будь-хто, хто його побачив, може
-за 5 хвилин pairing підтвердити сесію **своїм** гаманцем. Relay цьому не запобігає
-і не може, бо не знає, який гаманець «правильний».
+Сессию подтверждает **тот, кто первым** отправит валидное подтверждение. Ссылка с
+`sessionId` (QR, кнопка, скриншот) не секрет: любой, кто её увидел, может за
+5 минут pairing подтвердить сессию **своим** кошельком. Relay этому не
+препятствует и не может, потому что не знает, какой кошелёк «правильный».
 
-SDK гарантує, що підключення справжнє: підписано вашим доменом, адреса належить
-ключу, ключ каналу не підмінено. Але **чий** це гаманець, вирішує людина. Тому:
+SDK гарантирует, что подключение настоящее: подписано вашим доменом, адрес
+принадлежит ключу, ключ канала не подменён. Но **чей** это кошелёк, решает
+человек. Поэтому:
 
-1. після `waitForConnection()` покажіть користувачу `walletAddress` і не вважайте
-   її адресою користувача, доки той її не побачив;
-2. якщо адреса прив'язана до облікового запису на сайті, перевіряйте, що
-   підключилась та сама адреса, що й раніше, а не довіряйте першому підключенню;
-3. «Скасувати» / «Спробувати ще раз» = нова сесія (`createSession()`) і
-   `close()` старої. Окремого маршруту відмови немає, покинута сесія сама
-   протухне.
+1. после `waitForConnection()` покажите пользователю `walletAddress` и не считайте
+   его адресом пользователя, пока тот его не увидел;
+2. если адрес привязан к учётной записи на сайте, проверяйте, что подключился
+   тот же адрес, что и раньше, а не доверяйте первому подключению;
+3. «Отменить» / «Попробовать ещё раз» = новая сессия (`createSession()`) и
+   `close()` старой. Отдельного маршрута отказа нет, брошенная сессия сама
+   протухнет.
 
 ## API
 
 ### `new MinterConnectClient(config)`
 
-| Поле | Тип | Обов'язкове | Опис |
+| Поле | Тип | Обязательное | Описание |
 |---|---|---|---|
-| `relayUrl` | `string` | так | URL relay-сервера |
-| `manifestUrl` | `string` | так | https-адреса manifest сайту |
-| `walletAppLink` | `string` | так | Direct Link Mini App гаманця (`https://t.me/<Bot>/app`), без query |
-| `domain` | `string` | ні | Власний домен сайту для перевірки handshake. За замовчуванням host із `manifestUrl`; інше значення одразу дає `invalid_request`, бо такий підпис не пройшов би ніколи |
-| `callbackUrl` | `string` | ні | Вебхук для всіх сесій цього клієнта (див. «Вебхуки») |
-| `requestTimeoutMs` | `number` | ні | Таймаут ОДНОГО HTTP-запиту, за замовчуванням `10000` |
-| `requireHandshakeProof` | `boolean` | ні | Вимагати доказ handshake; за замовчуванням `true` |
+| `relayUrl` | `string` | да | URL relay-сервера |
+| `manifestUrl` | `string` | да | https-адрес manifest сайта |
+| `walletAppLink` | `string` | да | Direct Link Mini App кошелька (`https://t.me/<Bot>/app`), без query |
+| `domain` | `string` | нет | Собственный домен сайта для проверки handshake. По умолчанию host из `manifestUrl`; другое значение сразу даёт `invalid_request`, потому что такая подпись не прошла бы никогда |
+| `callbackUrl` | `string` | нет | Вебхук для всех сессий этого клиента (см. «Вебхуки») |
+| `requestTimeoutMs` | `number` | нет | Таймаут ОДНОГО HTTP-запроса, по умолчанию `10000` |
+| `requireHandshakeProof` | `boolean` | нет | Требовать доказательство handshake; по умолчанию `true` |
 
-Конструктор перевіряє конфіг одразу й кидає `invalid_request` на не-https
-`manifestUrl`, `walletAppLink` із query чи fragment і `domain`, що не збігається
-з host `manifestUrl`.
+Конструктор проверяет конфиг сразу и бросает `invalid_request` на не-https
+`manifestUrl`, `walletAppLink` с query или fragment и `domain`, который не
+совпадает с host `manifestUrl`.
 
-`client.domain` — домен, з яким SDK звіряє підпис. Він береться **тільки з
-конфігу**, ніколи не з відповіді relay (`dexDomain`).
+`client.domain` — домен, с которым SDK сверяет подпись. Он берётся **только из
+конфига**, никогда не из ответа relay (`dexDomain`).
 
 ### `client.createSession(options?): Promise<MinterConnectSession>`
 
-| Опція | Опис |
+| Опция | Описание |
 |---|---|
-| `callbackUrl` | Вебхук саме для цієї сесії; перекриває значення з конфігу |
-| `requestId` | Значення `X-Request-Id`: наскрізний traceId у логах relay і в заголовку вебхука |
+| `callbackUrl` | Вебхук именно для этой сессии; перекрывает значение из конфига |
+| `requestId` | Значение `X-Request-Id`: сквозной traceId в логах relay и в заголовке вебхука |
 
 ### `client.restoreSession(state): Promise<MinterConnectSession>`
 
-Відновлює сесію зі стану, збереженого через `session.serialize()`, див.
-[«Персистентність сесії»](#персистентність-сесії).
+Восстанавливает сессию из состояния, сохранённого через `session.serialize()`, см.
+[«Персистентность сессии»](#персистентность-сессии).
 
 ### `MinterConnectSession`
 
-| Член | Тип | Опис |
+| Член | Тип | Описание |
 |---|---|---|
-| `sessionId` | `string` | Ідентифікатор сесії в relay (не секрет) |
-| `deepLink` | `string` | `<walletAppLink>?startapp=connect_<sessionId>` для кнопки або QR |
-| `walletAddress` | `string \| null` | Заповнюється після `waitForConnection()` |
-| `expiresAt` | `string \| null` | ISO-8601. До підтвердження це дедлайн pairing'у (5 хв), після нього дедлайн сесії (7 днів) |
-| `handshakeVerified` | `boolean` | Чи перевірено доказ handshake самостійно |
-| `isConnected` | `boolean` | `true`, коли handshake пройдено і сесія готова підписувати |
-| `isClosed` | `boolean` | `true` після `close()` |
+| `sessionId` | `string` | Идентификатор сессии в relay (не секрет) |
+| `deepLink` | `string` | `<walletAppLink>?startapp=connect_<sessionId>` для кнопки или QR |
+| `walletAddress` | `string \| null` | Заполняется после `waitForConnection()` |
+| `expiresAt` | `string \| null` | ISO-8601. До подтверждения это дедлайн pairing'а (5 мин), после него дедлайн сессии (7 дней) |
+| `handshakeVerified` | `boolean` | Проверено ли доказательство handshake самостоятельно |
+| `isConnected` | `boolean` | `true`, когда handshake пройден и сессия готова подписывать |
+| `isClosed` | `boolean` | `true` после `close()` |
 
 #### `waitForConnection(options?): Promise<{ walletAddress, expiresAt, handshakeVerified }>`
 
-| Опція | За замовч. | Опис |
+| Опция | По умолч. | Описание |
 |---|---|---|
-| `intervalMs` | `2000` | Стартовий інтервал поллінгу (далі росте, з джитером ±20%) |
-| `maxIntervalMs` | `10000` | Стеля інтервалу |
-| `timeoutMs` | дедлайн пейрінгу з relay + 10 с | Бюджет очікування; після нього `connection_timeout` |
+| `intervalMs` | `2000` | Начальный интервал поллинга (дальше растёт, с джиттером ±20%) |
+| `maxIntervalMs` | `10000` | Потолок интервала |
+| `timeoutMs` | дедлайн пейринга из relay + 10 с | Бюджет ожидания; после него `connection_timeout` |
 
-Виходить **одразу**, якщо сесію відкликано (`session_revoked`) або вона протухла
-(`session_expired`). Доказ handshake тут приймається, лише якщо він не старший за
-10 хвилин. На вже підключеній (наприклад, відновленій) сесії метод одразу
-повертає поточний результат.
+Выходит **сразу**, если сессию отозвали (`session_revoked`) или она протухла
+(`session_expired`). Доказательство handshake здесь принимается, только если оно
+не старше 10 минут. На уже подключённой (например, восстановленной) сессии метод
+сразу возвращает текущий результат.
 
 #### `sendTransaction(params, options?): Promise<string>`
 
-Найпростіший шлях: створює запит і чекає результат. Повертає `signedTxHex`, а
-відправку в мережу робите ви (див. [«Відправка транзакції»](#відправка-транзакції)).
+Самый простой путь: создаёт запрос и ждёт результат. Возвращает `signedTxHex`, а
+отправку в сеть делаете вы (см. [«Отправка транзакции»](#отправка-транзакции)).
 
 | Поле `params` | Формат |
 |---|---|
 | `to` | `Mx` + 40 hex |
-| `amount` | **рядок**, десяткове число в **монетах, не в pip**: `^(0\|[1-9][0-9]*)(\.[0-9]{1,18})?$`, строго більше нуля. Без експоненти, знака і пробілів |
-| `coin` | тикер `^[A-Z0-9-]{3,10}$` (`'BIP'`, `'LP-123'`). Регістр не нормалізується: `'bip'` не пройде |
+| `amount` | **строка**, десятичное число в **монетах, не в pip**: `^(0\|[1-9][0-9]*)(\.[0-9]{1,18})?$`, строго больше нуля. Без экспоненты, знака и пробелов |
+| `coin` | тикер `^[A-Z0-9-]{3,10}$` (`'BIP'`, `'LP-123'`). Регистр не нормализуется: `'bip'` не пройдёт |
 
-Інших полів немає й бути не може: nonce, комісію, монету комісії, chainId і
-payload гаманець визначає сам, тож сайт не може їх підкласти. SDK перевіряє
-`params` тими самими правилами, що й гаманець, включно із забороною зайвих
-полів. Некоректний виклик одразу дає `invalid_request`, без запиту до relay і
-без пуша користувачу.
+Других полей нет и быть не может: nonce, комиссию, монету комиссии, chainId и
+payload кошелёк определяет сам, так что сайт не может их подложить. SDK
+проверяет `params` теми же правилами, что и кошелёк, включая запрет лишних
+полей. Некорректный вызов сразу даёт `invalid_request`, без запроса к relay и
+без пуша пользователю.
 
-`options` — це `requestId` плюс опції `waitForSignature()`.
+`options` — это `requestId` плюс опции `waitForSignature()`.
 
 #### `requestTransaction(params, options?): Promise<string>`
 
-Те саме, але повертає `reqId` одразу. Потрібен, щоб надіслати кілька
-транзакцій і чекати їх незалежно через `waitForSignature(reqId)`.
+То же самое, но возвращает `reqId` сразу. Нужен, чтобы отправить несколько
+транзакций и ждать их независимо через `waitForSignature(reqId)`.
 
 #### `waitForSignature(reqId, options?): Promise<string>`
 
-| Опція | За замовч. | Опис |
+| Опция | По умолч. | Описание |
 |---|---|---|
-| `pollIntervalMs` | `2000` | Стартовий інтервал поллінгу |
-| `maxIntervalMs` | `5000` | Стеля інтервалу |
-| `timeoutMs` | `expiresAt` запиту + 15 с | Бюджет очікування |
+| `pollIntervalMs` | `2000` | Начальный интервал поллинга |
+| `maxIntervalMs` | `5000` | Потолок интервала |
+| `timeoutMs` | `expiresAt` запроса + 15 с | Бюджет ожидания |
 
-Дефолтний таймаут **виводиться з `expiresAt`**, який relay повернув на створення
-запиту, плюс запас. Так SDK гарантовано доживає до фінального статусу й віддає
-`signing_expired` («гаманець не встиг») замість беззмістовного `signing_timeout`.
+Таймаут по умолчанию **выводится из `expiresAt`**, который relay вернул при
+создании запроса, плюс запас. Так SDK гарантированно доживает до финального
+статуса и отдаёт `signing_expired` («кошелёк не успел») вместо бессмысленного
+`signing_timeout`.
 
-Відмову гаманця SDK розшифровує і мапить за `error.code`:
+Отказ кошелька SDK расшифровывает и мапит по `error.code`:
 
-| Гаманець | SDK | Що сталось |
+| Кошелёк | SDK | Что произошло |
 |---|---|---|
-| `user_rejected` | `signing_rejected` | Юзер відхилив запит |
-| `bad_request` | `wallet_bad_request` | Гаманець вважає запит некоректним (версія, метод, params) |
-| `signing_failed` | `wallet_signing_failed` | Запит коректний, але підписати не вдалося (мережа, баланс, монети не існує) |
-| `rejected` без результату | `wallet_bad_request` | Гаманець не зміг навіть відповісти шифровано: немає ключа сесії (інший пристрій, очищене сховище) або сесію відкликано. Якщо повторюється, запропонуйте перепідключитись |
+| `user_rejected` | `signing_rejected` | Юзер отклонил запрос |
+| `bad_request` | `wallet_bad_request` | Кошелёк считает запрос некорректным (версия, метод, params) |
+| `signing_failed` | `wallet_signing_failed` | Запрос корректный, но подписать не удалось (сеть, баланс, монеты не существует) |
+| `rejected` без результата | `wallet_bad_request` | Кошелёк не смог даже ответить шифрованно: нет ключа сессии (другое устройство, очищенное хранилище) или сессию отозвали. Если повторяется, предложите переподключиться |
 
-Текст від гаманця лежить у `err.walletErrorMessage`. Він для людини, не для
-логіки: розгалужуйтесь за `code`.
+Текст от кошелька лежит в `err.walletErrorMessage`. Он для человека, не для
+логики: ветвитесь по `code`.
 
 #### `serialize(): SerializedSession`
 
-Стан для збереження між запусками сайту. Див. [«Персистентність сесії»](#персистентність-сесії).
+Состояние для сохранения между запусками сайта. См. [«Персистентность сессии»](#персистентность-сессии).
 
 #### `close()` / `dispose()`
 
-Зупиняє всі цикли поллінгу цієї сесії й перериває запити, що вже в польоті.
-Ідемпотентний. Викликайте, коли користувач пішов зі сторінки або скасував
-операцію, інакше `waitForConnection()` довбитиме relay до свого таймауту.
+Останавливает все циклы поллинга этой сессии и прерывает запросы, которые уже в
+полёте. Идемпотентный. Вызывайте, когда пользователь ушёл со страницы или
+отменил операцию, иначе `waitForConnection()` будет долбить relay до своего
+таймаута.
 
-**Сесію на relay це не відкликає**: відкликати може лише власник гаманця.
+**Сессию на relay это не отзывает**: отозвать может только владелец кошелька.
 
-## Відправка транзакції
+## Отправка транзакции
 
-Relay і гаманець транзакцію **не транслюють**: `signedTxHex` у мережу відправляє
-сайт сам, через Minter Node API v2 (`send_transaction`) або Gate API. Приклад для
-Node.js без залежностей:
+Relay и кошелёк транзакцию **не транслируют**: `signedTxHex` в сеть отправляет
+сайт сам, через Minter Node API v2 (`send_transaction`) или Gate API. Пример для
+Node.js без зависимостей:
 
 ```typescript
 async function broadcast(signedTxHex: string): Promise<string> {
@@ -276,7 +279,7 @@ async function broadcast(signedTxHex: string): Promise<string> {
 }
 ```
 
-З [`minter-js-sdk`](https://github.com/MinterTeam/minter-js-sdk) це те саме:
+С [`minter-js-sdk`](https://github.com/MinterTeam/minter-js-sdk) это то же самое:
 
 ```typescript
 import { Minter } from 'minter-js-sdk';
@@ -284,60 +287,59 @@ const minter = new Minter({ apiType: 'node', baseURL: process.env.MINTER_NODE_UR
 const { hash } = await minter.postSignedTx(signedTxHex);
 ```
 
-## Обробка помилок
+## Обработка ошибок
 
-Усі помилки SDK — інстанси `MinterConnectError`. Розрізняйте їх за `code`,
-а не за текстом повідомлення.
+Все ошибки SDK — инстансы `MinterConnectError`. Различайте их по `code`,
+а не по тексту сообщения.
 
-| `code` | HTTP | Коли | Що робити |
+| `code` | HTTP | Когда | Что делать |
 |---|---|---|---|
-| `session_revoked` | 410 | Користувач відкликав доступ у гаманці | Нове підключення |
-| `session_expired` | 410 | Сесія протухла (pairing 5 хв / сесія 7 днів) | Нове підключення |
-| `session_not_found` | 404 | Relay не знає такої сесії | Нове підключення |
-| `unauthorized` | 401/403 | `dexToken` відсутній або не від цієї сесії (`missing_dex_token` / `invalid_dex_token`) | Нове підключення; перевірте, що зберігаєте токен разом із сесією |
-| `invalid_manifest` | 422 | Relay не прийняв manifest (`invalid_manifest_url`, `manifest_unreachable`, `manifest_invalid`, `manifest_domain_mismatch`) | Виправити manifest/конфіг, причина в `relayError` |
-| `signing_rejected` | — | Користувач відхилив запит | Показати це користувачу |
-| `wallet_bad_request` | — | Гаманець вважає запит некоректним або не може його прочитати | Перевірити версію SDK/гаманця; якщо повторюється, перепідключитись |
-| `wallet_signing_failed` | — | Гаманець не зміг підписати (баланс, мережа, монета) | Показати `walletErrorMessage` |
-| `signing_expired` | 410 | Запит протух (90 с), гаманець не відповів | Повторити запит |
-| `request_not_found` | 404 | Relay не знає такого `reqId` | Повторити запит |
-| `already_finalized` | 409 | Запит уже завершено | Забрати результат `waitForSignature()` |
-| `session_not_connected` | 400 | `sendTransaction()` до `waitForConnection()` | Виправити виклик |
-| `handshake_invalid` | — | Доказ handshake не зійшовся: чужий домен, протухлий підпис, підмінена адреса чи ключ каналу (деталь у `relayError`) | **Не ретраїти**, розбиратись |
-| `handshake_unverifiable` | — | Relay не дав доказу | Оновити relay або явно вимкнути перевірку |
-| `invalid_request` | 400 | Некоректні `params`, конфіг, збережений стан або тіло запиту | Виправити виклик, дивитись `message` |
-| `rate_limited` | 429 | Ліміт relay: IP (`rate_limited`) або сесії (`too_many_pending_requests`, `session_rate_limited`) | Чекати `retryAfterMs` |
-| `connection_timeout` | — | Користувач не підтвердив за `timeoutMs` | Запропонувати ще раз |
-| `signing_timeout` | — | Гаманець не відповів за `timeoutMs` | Запропонувати ще раз |
-| `session_closed` | — | Виклик після `close()` | Це ваш власний сигнал скасування |
-| `crypto_unavailable` | — | Немає `crypto.subtle` (не-HTTPS сторінка / застарілий Node) | Перевірити середовище |
-| `relay_error` | 5xx | Relay зламався або відповів неочікувано | Повторити пізніше |
-| `network_error` | — | Relay недосяжний або не відповів за `requestTimeoutMs` | Повторити |
+| `session_revoked` | 410 | Пользователь отозвал доступ в кошельке | Новое подключение |
+| `session_expired` | 410 | Сессия протухла (pairing 5 мин / сессия 7 дней) | Новое подключение |
+| `session_not_found` | 404 | Relay не знает такой сессии | Новое подключение |
+| `unauthorized` | 401/403 | `dexToken` отсутствует или не от этой сессии (`missing_dex_token` / `invalid_dex_token`) | Новое подключение; проверьте, что сохраняете токен вместе с сессией |
+| `invalid_manifest` | 422 | Relay не принял manifest (`invalid_manifest_url`, `manifest_unreachable`, `manifest_invalid`, `manifest_domain_mismatch`) | Исправить manifest/конфиг, причина в `relayError` |
+| `signing_rejected` | — | Пользователь отклонил запрос | Показать это пользователю |
+| `wallet_bad_request` | — | Кошелёк считает запрос некорректным или не может его прочитать | Проверить версию SDK/кошелька; если повторяется, переподключиться |
+| `wallet_signing_failed` | — | Кошелёк не смог подписать (баланс, сеть, монета) | Показать `walletErrorMessage` |
+| `signing_expired` | 410 | Запрос протух (90 с), кошелёк не ответил | Повторить запрос |
+| `request_not_found` | 404 | Relay не знает такого `reqId` | Повторить запрос |
+| `already_finalized` | 409 | Запрос уже завершён | Забрать результат `waitForSignature()` |
+| `session_not_connected` | 400 | `sendTransaction()` до `waitForConnection()` | Исправить вызов |
+| `handshake_invalid` | — | Доказательство handshake не сошлось: чужой домен, протухшая подпись, подменённый адрес или ключ канала (деталь в `relayError`) | **Не ретраить**, разбираться |
+| `handshake_unverifiable` | — | Relay не дал доказательства | Обновить relay или явно отключить проверку |
+| `invalid_request` | 400 | Некорректные `params`, конфиг, сохранённое состояние или тело запроса | Исправить вызов, смотреть `message` |
+| `rate_limited` | 429 | Лимит relay: IP (`rate_limited`) или сессии (`too_many_pending_requests`, `session_rate_limited`) | Ждать `retryAfterMs` |
+| `connection_timeout` | — | Пользователь не подтвердил за `timeoutMs` | Предложить ещё раз |
+| `signing_timeout` | — | Кошелёк не ответил за `timeoutMs` | Предложить ещё раз |
+| `session_closed` | — | Вызов после `close()` | Это ваш собственный сигнал отмены |
+| `crypto_unavailable` | — | Нет `crypto.subtle` (не-HTTPS страница / устаревший Node) | Проверить окружение |
+| `relay_error` | 5xx | Relay сломался или ответил неожиданно | Повторить позже |
+| `network_error` | — | Relay недоступен или не ответил за `requestTimeoutMs` | Повторить |
 
-Додаткові поля для програмних рішень:
+Дополнительные поля для программных решений:
 
 ```typescript
 interface MinterConnectError {
   code: MinterConnectErrorCode;
-  httpStatus?: number;          // статус відповіді relay
-  relayError?: string;          // поле error з тіла relay (або причина провалу handshake)
-  retryAfterMs?: number;        // для rate_limited: Retry-After або дефолт 5 с, якщо relay його не дав
-  walletErrorMessage?: string;  // текст гаманця для signing_rejected / wallet_*
+  httpStatus?: number;          // статус ответа relay
+  relayError?: string;          // поле error из тела relay (или причина провала handshake)
+  retryAfterMs?: number;        // для rate_limited: Retry-After или дефолт 5 с, если relay его не дал
+  walletErrorMessage?: string;  // текст кошелька для signing_rejected / wallet_*
   isRetryable: boolean;         // network_error | relay_error | rate_limited
   requiresReconnect: boolean;   // session_revoked | session_expired | session_not_found | unauthorized
 }
 ```
 
-`handshake_invalid` свідомо **не** позначений `requiresReconnect`: автоматично
-створювати нову сесію у відповідь на провалену перевірку означає повторити
-спробу проти того самого relay, який щойно не зійшовся.
+`handshake_invalid` сознательно **не** помечен `requiresReconnect`: автоматически
+создавать новую сессию в ответ на проваленную проверку означает повторить
+попытку против того же relay, который только что не сошёлся.
 
-### Найчастіший реальний сценарій: `session_revoked`
+### Самый частый реальный сценарий: `session_revoked`
 
-Користувач відкликає доступ у гаманці. Це штатна дія, а не збій. Сесія після
-цього мертва назавжди: relay віддає 410 на будь-який запит у неї, а всі
-pending-запити одразу переводяться в `rejected`. Ретраї не допоможуть
-**ніколи**.
+Пользователь отзывает доступ в кошельке. Это штатное действие, а не сбой. Сессия
+после этого мертва навсегда: relay отдаёт 410 на любой запрос в неё, а все
+pending-запросы сразу переводятся в `rejected`. Ретраи не помогут **никогда**.
 
 ```typescript
 async function sendWithReconnect(getSession: () => Promise<MinterConnectSession>, params: SendTransactionParams) {
@@ -347,9 +349,9 @@ async function sendWithReconnect(getSession: () => Promise<MinterConnectSession>
   } catch (err) {
     if (err instanceof MinterConnectError && err.requiresReconnect) {
       session.close();
-      dropStoredSession();               // видаліть збережений стан
+      dropStoredSession();               // удалите сохранённое состояние
       const fresh = await client.createSession();
-      showConnectButton(fresh.deepLink); // користувач має підтвердити наново
+      showConnectButton(fresh.deepLink); // пользователь должен подтвердить заново
       const { walletAddress } = await fresh.waitForConnection();
       await askUserToConfirmAddress(walletAddress);
       return fresh.sendTransaction(params);
@@ -359,70 +361,70 @@ async function sendWithReconnect(getSession: () => Promise<MinterConnectSession>
 }
 ```
 
-Те саме стосується `waitForConnection()`: він виходить із `session_revoked`
-одразу, тому кнопку «підключитись знову» можна показати негайно.
+То же касается `waitForConnection()`: он выходит с `session_revoked` сразу,
+поэтому кнопку «подключиться снова» можно показать немедленно.
 
-### Ліміти relay
+### Лимиты relay
 
-На IP: 120 запитів/хв загалом, 10/хв на створення сесії, 30/хв на створення
-запиту на підпис. На сесію: не більше `SESSION_MAX_PENDING_REQUESTS` запитів
-одночасно (`too_many_pending_requests`) і `SESSION_MAX_REQUESTS_PER_WINDOW` за
-вікно (`session_rate_limited`). Для лімітів сесії relay не шле `Retry-After`,
-тож SDK ставить `retryAfterMs` = 5 с.
+На IP: 120 запросов/мин всего, 10/мин на создание сессии, 30/мин на создание
+запроса на подпись. На сессию: не больше `SESSION_MAX_PENDING_REQUESTS` запросов
+одновременно (`too_many_pending_requests`) и `SESSION_MAX_REQUESTS_PER_WINDOW` за
+окно (`session_rate_limited`). Для лимитов сессии relay не шлёт `Retry-After`,
+поэтому SDK ставит `retryAfterMs` = 5 с.
 
-У циклах поллінгу SDK обробляє 429 сам: чекає `retryAfterMs` і продовжує, якщо
-бюджет `timeoutMs` це дозволяє. Для одноразових `createSession()` /
-`requestTransaction()` 429 фатальний, з `retryAfterMs` у помилці.
+В циклах поллинга SDK обрабатывает 429 сам: ждёт `retryAfterMs` и продолжает,
+если бюджет `timeoutMs` это позволяет. Для одноразовых `createSession()` /
+`requestTransaction()` 429 фатален, с `retryAfterMs` в ошибке.
 
-Інтервали поллінгу мають ±20% джитера й плавно ростуть, щоб сотня паралельних
-сесій одного сайту не била в relay синхронно.
+Интервалы поллинга имеют ±20% джиттера и плавно растут, чтобы сотня параллельных
+сессий одного сайта не била в relay синхронно.
 
-## Перевірка handshake
+## Проверка handshake
 
-Підтверджуючи підключення, гаманець підписує identity-ключем рядок
+Подтверждая подключение, кошелёк подписывает identity-ключом строку
 
 ```
 minter-connect:handshake:<sessionId>:<ecdhPublicKeyHex lowercase>:<domain lowercase>:<issuedAt ms>
 ```
 
-де `domain` — host із manifest, який гаманець показав користувачу. Relay
-зберігає доказ і віддає його в `GET /sessions/:sessionId`. SDK перевіряє його
-**сам**, тією самою логікою, що й relay (`verifyHandshake` у
-`minter-backend/src/shared/handshake.ts`), до того як вивести ключ каналу:
+где `domain` — host из manifest, который кошелёк показал пользователю. Relay
+хранит доказательство и отдаёт его в `GET /sessions/:sessionId`. SDK проверяет
+его **сам**, той же логикой, что и relay (`verifyHandshake` в
+`minter-backend/src/shared/handshake.ts`), до того как вывести ключ канала:
 
-| Перевірка | Провал (`err.relayError`) |
+| Проверка | Провал (`err.relayError`) |
 |---|---|
-| Підписаний домен дорівнює **вашому** `client.domain` | `domain_mismatch` |
-| `issuedAt` не старший за 10 хв і не більше ніж на 120 с у майбутньому | `stale_proof` |
-| `walletAddress` виводиться рівно з `identityPublicKeyHex` | `address_mismatch` |
-| Підпис валідний для рядка з `walletPublicKeyHex` (ключ каналу), доменом і часом | `invalid_signature` |
+| Подписанный домен равен **вашему** `client.domain` | `domain_mismatch` |
+| `issuedAt` не старше 10 мин и не больше чем на 120 с в будущем | `stale_proof` |
+| `walletAddress` выводится ровно из `identityPublicKeyHex` | `address_mismatch` |
+| Подпись валидна для строки с `walletPublicKeyHex` (ключ канала), доменом и временем | `invalid_signature` |
 
-Домен у підписі працює як `ton_proof`: доказ, який гаманець видав фішинговому
-сайту, на справжньому не пройде. Тому очікуваний домен береться з вашого
-конфігу, а не з `dexDomain` у відповіді relay. Інакше relay, що переслав
-чужий доказ, сам назвав би «правильний» домен.
+Домен в подписи работает как `ton_proof`: доказательство, которое кошелёк выдал
+фишинговому сайту, на настоящем не пройдёт. Поэтому ожидаемый домен берётся из
+вашего конфига, а не из `dexDomain` в ответе relay. Иначе relay, переславший
+чужое доказательство, сам назвал бы «правильный» домен.
 
-Без перевірки ключа каналу E2E-шифрування нічого не дає проти самого relay: хто
-контролює relay або TLS-термінуючий проксі, підставляє свій ECDH-ключ і читає
-всі «зашифровані» запити.
+Без проверки ключа канала E2E-шифрование ничего не даёт против самого relay: кто
+контролирует relay или TLS-терминирующий прокси, подставляет свой ECDH-ключ и
+читает все «зашифрованные» запросы.
 
-Будь-який провал дає `handshake_invalid`. Ретраїти його не можна, бо наступна
-спроба піде в той самий relay.
+Любой провал даёт `handshake_invalid`. Ретраить его нельзя, потому что
+следующая попытка пойдёт в тот же relay.
 
-При **відновленні** сесії (`restoreSession()`) свіжість не перевіряється:
-handshake міг бути до 7 днів тому. Домен, адреса і підпис перевіряються завжди.
+При **восстановлении** сессии (`restoreSession()`) свежесть не проверяется:
+handshake мог быть до 7 дней назад. Домен, адрес и подпись проверяются всегда.
 
 ## Вебхуки
 
-Якщо передати `callbackUrl`, relay після фіналізації кожного запиту зробить
-`POST` на цей URL. Вебхук **доповнює поллінг, а не замінює його**: доставка
-може не відбутись (черга лежить, ваш сервер віддав 4xx), тому
-`waitForSignature()` лишається джерелом істини. Результат (шифротекст) забирайте
-через SDK, а не з вебхука.
+Если передать `callbackUrl`, relay после финализации каждого запроса сделает
+`POST` на этот URL. Вебхук **дополняет поллинг, а не заменяет его**: доставка
+может не произойти (очередь лежит, ваш сервер отдал 4xx), поэтому
+`waitForSignature()` остаётся источником истины. Результат (шифротекст)
+забирайте через SDK, а не из вебхука.
 
-Вимоги relay до URL: `https`, стандартний порт, максимум 2048 символів, не в
-приватну мережу. Інакше relay відповість 400 `invalid_callback_url` (SDK кине
-`invalid_request` із причиною в `message`).
+Требования relay к URL: `https`, стандартный порт, максимум 2048 символов, не в
+приватную сеть. Иначе relay ответит 400 `invalid_callback_url` (SDK бросит
+`invalid_request` с причиной в `message`).
 
 ```http
 POST <callbackUrl>
@@ -434,195 +436,195 @@ X-Relay-Signature: sha256=<hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`)>
 { "reqId": "...", "sessionId": "...", "status": "signed" | "rejected" | "expired" }
 ```
 
-6 спроб з експоненційним бекофом (2 с, 4 с, 8 с, 16 с, 32 с). Відповідь 4xx
-(крім 408 і 429) — остаточна відмова без ретраїв.
+6 попыток с экспоненциальным бэкофом (2 с, 4 с, 8 с, 16 с, 32 с). Ответ 4xx
+(кроме 408 и 429) — окончательный отказ без ретраев.
 
-### Перевірка підпису обов'язкова
+### Проверка подписи обязательна
 
-Без перевірки `X-Relay-Signature` ваш ендпоінт приймає підроблений колбек від
-будь-кого, хто дізнався URL: «цю транзакцію підписано», і сайт відпускає товар.
-Секрет той самий, що у relay в `WEBHOOK_SIGNING_SECRET`.
+Без проверки `X-Relay-Signature` ваш эндпоинт принимает поддельный колбэк от
+любого, кто узнал URL: «эта транзакция подписана», и сайт отпускает товар.
+Секрет тот же, что у relay в `WEBHOOK_SIGNING_SECRET`.
 
 ```typescript
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-// rawBody — саме СИРЕ тіло запиту (Buffer/string), не результат JSON.parse:
-// HMAC рахується над байтами, і будь-яка пересеріалізація його зламає.
+// rawBody — именно СЫРОЕ тело запроса (Buffer/string), не результат JSON.parse:
+// HMAC считается над байтами, и любая пересериализация его сломает.
 export function verifyRelayWebhook(rawBody: string, headers: Record<string, string>, secret: string): boolean {
   const timestamp = headers['x-relay-timestamp'];
   const signature = headers['x-relay-signature'];
   if (!timestamp || !signature?.startsWith('sha256=')) return false;
 
-  // Вікно свіжості проти replay: старий, колись перехоплений колбек не має прийматись.
+  // Окно свежести против replay: старый, когда-то перехваченный колбэк не должен приниматься.
   if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
 
   const expected = createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest();
   const received = Buffer.from(signature.slice('sha256='.length), 'hex');
 
-  // Порівняння сталого часу: звичайне === витікає позицію першої розбіжності.
+  // Сравнение за постоянное время: обычное === выдаёт позицию первого расхождения.
   return expected.length === received.length && timingSafeEqual(expected, received);
 }
 ```
 
-У Express сире тіло треба зберегти явно:
+В Express сырое тело нужно сохранить явно:
 
 ```typescript
 app.post('/minter-webhook', express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8'); } }), (req, res) => {
   if (!verifyRelayWebhook((req as any).rawBody, req.headers as Record<string, string>, process.env.WEBHOOK_SIGNING_SECRET!)) {
-    return res.sendStatus(401); // 4xx — relay більше не ретраїтиме цей колбек
+    return res.sendStatus(401); // 4xx — relay больше не будет ретраить этот колбэк
   }
-  // ... обробка req.body.status
+  // ... обработка req.body.status
   res.sendStatus(200);
 });
 ```
 
-## Персистентність сесії
+## Персистентность сессии
 
-Relay тримає підтверджену сесію 7 днів, але ephemeral-ключ ECDH і `dexToken`
-живуть лише в пам'яті інстанса `MinterConnectSession`. Без збереження стану
-перезавантаження вимагає нового пейрінгу.
+Relay держит подтверждённую сессию 7 дней, но ephemeral-ключ ECDH и `dexToken`
+живут только в памяти инстанса `MinterConnectSession`. Без сохранения состояния
+перезагрузка требует нового пейринга.
 
 ```typescript
-// Після успішного конекту
+// После успешного подключения
 await store.put('minter-session', encrypt(JSON.stringify(session.serialize())));
 
-// Після перезапуску
+// После перезапуска
 const raw = await store.get('minter-session');
 if (raw) {
   try {
     const session = await client.restoreSession(JSON.parse(decrypt(raw)));
     if (session.isConnected) {
-      // готово: можна одразу sendTransaction(), пейрінг не потрібен
+      // готово: можно сразу sendTransaction(), пейринг не нужен
     } else {
-      // гаманець ще не підтвердив: показуємо session.deepLink і чекаємо
+      // кошелёк ещё не подтвердил: показываем session.deepLink и ждём
       await session.waitForConnection();
     }
   } catch (err) {
     if (err instanceof MinterConnectError && (err.requiresReconnect || err.code === 'invalid_request')) {
-      await store.delete('minter-session'); // сесії більше немає або стан застарів
+      await store.delete('minter-session'); // сессии больше нет или состояние устарело
     } else throw err;
   }
 }
 ```
 
-`SerializedSession` — це `{ v: 2, sessionId, ephemeralSecretKeyHex, dexToken }`
-і більше нічого. Ані адреса гаманця, ані `handshakeVerified` не зберігаються
-навмисно: `restoreSession()` бере їх із `GET /sessions/:sessionId` і **перевіряє
-доказ handshake заново** (домен, адресу, підпис), так само як при першому
-підключенні.
+`SerializedSession` — это `{ v: 2, sessionId, ephemeralSecretKeyHex, dexToken }`
+и больше ничего. Ни адрес кошелька, ни `handshakeVerified` не сохраняются
+намеренно: `restoreSession()` берёт их из `GET /sessions/:sessionId` и
+**проверяет доказательство handshake заново** (домен, адрес, подпись), так же как
+при первом подключении.
 
-> ⚠️ **`ephemeralSecretKeyHex` і `dexToken` — секрети. Зберігайте їх лише на
-> сервері або зашифрованими.** З ephemeral-ключем можна розшифрувати трафік
-> сесії. З `dexToken` можна від імені вашого сайту слати користувачу запити на
-> підпис: підписує все одно лише він, але це готовий канал для фішингу. У
-> браузері не кладіть цей стан у `localStorage` у відкритому вигляді.
+> ⚠️ **`ephemeralSecretKeyHex` и `dexToken` — секреты. Храните их только на
+> сервере или в зашифрованном виде.** С ephemeral-ключом можно расшифровать
+> трафик сессии. С `dexToken` можно от имени вашего сайта слать пользователю
+> запросы на подпись: подписывает всё равно только он, но это готовый канал для
+> фишинга. В браузере не кладите это состояние в `localStorage` в открытом виде.
 
-Стан v1 (SDK 1.x, без `dexToken`) не відновлюється: relay закрив ті сесії при
-міграції. `restoreSession()` кине `invalid_request` з поясненням, що потрібне
-нове підключення.
+Состояние v1 (SDK 1.x, без `dexToken`) не восстанавливается: relay закрыл те
+сессии при миграции. `restoreSession()` бросит `invalid_request` с пояснением,
+что нужно новое подключение.
 
-Помилки `restoreSession()`: `session_revoked` / `session_expired` /
-`session_not_found` / `unauthorized` (сесії немає або токен не підходить:
-чистьте сховище і піднімайте новий пейрінг), `handshake_invalid` (доказ не
-зійшовся, ретраєм не лікується), `invalid_request` (битий, застарілий або чужий
-формат стану).
+Ошибки `restoreSession()`: `session_revoked` / `session_expired` /
+`session_not_found` / `unauthorized` (сессии нет или токен не подходит:
+чистите хранилище и поднимайте новый пейринг), `handshake_invalid`
+(доказательство не сошлось, ретраем не лечится), `invalid_request` (битый,
+устаревший или чужой формат состояния).
 
-## Строки життя
+## Сроки жизни
 
-| Що | Скільки | Наслідок |
+| Что | Сколько | Последствие |
 |---|---|---|
-| Pairing (від `createSession()` до підтвердження) | 5 хв | `session_expired` |
-| Підтверджена сесія | 7 днів | `session_expired` на будь-який `sendTransaction()` |
-| Окремий запит на підпис | 90 с | `signing_expired` |
+| Pairing (от `createSession()` до подтверждения) | 5 мин | `session_expired` |
+| Подтверждённая сессия | 7 дней | `session_expired` на любой `sendTransaction()` |
+| Отдельный запрос на подпись | 90 с | `signing_expired` |
 
-Це дефолти relay, конкретний оператор може їх змінити. Не хардкодьте ці числа:
-беріть `session.expiresAt` і покладайтесь на коди помилок.
+Это дефолты relay, конкретный оператор может их изменить. Не хардкодьте эти
+числа: берите `session.expiresAt` и полагайтесь на коды ошибок.
 
-## Безпека
+## Безопасность
 
-- Жодна операція SDK не передає й не запитує приватний ключ або сид-фразу.
-- Кожна сесія має власний ephemeral-ключ ECDH і власний `dexToken`:
-  компрометація однієї сесії не зачіпає інші.
-- `session.serialize()` віддає обидва секрети назовні, тож зберігайте
-  результат лише на сервері або зашифрованим.
-- Relay бачить лише шифротекст; розшифрувати може лише гаманець цієї сесії.
-- Гаманець бере від сайту лише `to`, `amount`, `coin` і показує переказ
-  користувачу перед підписом. SDK не може обійти це підтвердження.
-- Підключену адресу завжди показуйте користувачу (див. «Хто підтверджує сесію»).
-- Вхідні вебхуки перевіряйте за HMAC (див. вище). Без цього довіряти їм не можна.
+- Ни одна операция SDK не передаёт и не запрашивает приватный ключ или сид-фразу.
+- У каждой сессии собственный ephemeral-ключ ECDH и собственный `dexToken`:
+  компрометация одной сессии не затрагивает другие.
+- `session.serialize()` отдаёт оба секрета наружу, так что храните результат
+  только на сервере или в зашифрованном виде.
+- Relay видит только шифротекст; расшифровать может только кошелёк этой сессии.
+- Кошелёк берёт от сайта только `to`, `amount`, `coin` и показывает перевод
+  пользователю перед подписью. SDK не может обойти это подтверждение.
+- Подключённый адрес всегда показывайте пользователю (см. «Кто подтверждает сессию»).
+- Входящие вебхуки проверяйте по HMAC (см. выше). Без этого доверять им нельзя.
 
 ## Демо
 
-[`demo/`](demo) — мінімальна сторінка на весь потік з живим гаманцем:
-підключення → адреса → форма `to/amount/coin` → підпис → відправка в мережу. SDK
-там працює на сервері, тож `dexToken` і ключі в браузер не потрапляють.
+[`demo/`](demo) — минимальная страница на весь поток с живым кошельком:
+подключение → адрес → форма `to/amount/coin` → подпись → отправка в сеть. SDK
+там работает на сервере, так что `dexToken` и ключи в браузер не попадают.
 
 ```bash
-PUBLIC_URL=https://<публічна https-адреса цього сервера> \
-RELAY_URL=https://<relay, яким користується гаманець> \
+PUBLIC_URL=https://<публичный https-адрес этого сервера> \
+RELAY_URL=https://<relay, которым пользуется кошелёк> \
 WALLET_APP_LINK=https://t.me/<Bot>/app \
 MINTER_NODE_URL=https://<node>/v2 \
-npm run demo   # слухає PORT=8787
+npm run demo   # слушает PORT=8787
 ```
 
-Relay і гаманець самі завантажують manifest з `PUBLIC_URL`, тому з телефоном
-потрібна публічна https-адреса, наприклад тунель:
-`cloudflared tunnel --url http://localhost:8787`. `MINTER_NODE_URL` потрібен
-лише для кнопки «Відправити».
+Relay и кошелёк сами загружают manifest с `PUBLIC_URL`, поэтому с телефоном
+нужен публичный https-адрес, например туннель:
+`cloudflared tunnel --url http://localhost:8787`. `MINTER_NODE_URL` нужен только
+для кнопки «Отправить».
 
-### Увесь стек одною командою
+### Весь стек одной командой
 
-`npm run dev:stack` піднімає все для живого тесту з гаманцем у Telegram:
-Postgres і Redis (`docker compose` бекенду), міграції, публічні https-адреси,
-relay, Mini App гаманця і демо. Сусідні чекаути шукаються в
-`../minterWallet/minter-backend` і `../minterWallet/minter-wallet-miniapp`.
+`npm run dev:stack` поднимает всё для живого теста с кошельком в Telegram:
+Postgres и Redis (`docker compose` бэкенда), миграции, публичные https-адреса,
+relay, Mini App кошелька и демо. Соседние чекауты ищутся в
+`../minterWallet/minter-backend` и `../minterWallet/minter-wallet-miniapp`.
 
 ```bash
 WALLET_APP_LINK=https://t.me/<Bot>/<short> MINTER_NODE_URL=https://<node>/v2 npm run dev:stack
 ```
 
-Що робить скрипт:
+Что делает скрипт:
 
-- **Публічні адреси.** За замовчуванням це три quick-тунелі cloudflared. Якщо
-  вони не створюються (`api.trycloudflare.com` недоступний), передайте власні
-  https-адреси, які ведуть на порти 3000 / 5173 / 8787:
+- **Публичные адреса.** По умолчанию это три quick-туннеля cloudflared. Если
+  они не создаются (`api.trycloudflare.com` недоступен), передайте собственные
+  https-адреса, ведущие на порты 3000 / 5173 / 8787:
   `RELAY_PUBLIC_URL`, `WALLET_PUBLIC_URL`, `DEMO_PUBLIC_URL`.
-- **Конфіг relay.** `.env` бекенду не змінюється: потрібні значення
-  (`PORT`, `WALLET_MINI_APP_URL` = адреса гаманця, `SESSION_TTL_MS` = 7 днів)
-  передаються змінними оточення.
-- **Конфіг гаманця.** У `.env.local` гаманця записується лише рядок
-  `VITE_RELAY_URL`, решта файлу не чіпається.
-- **Що лишається вам.** Наприкінці скрипт друкує адресу гаманця. Її треба
-  вписати в BotFather (`/myapps` → Edit Web App URL). Адреси quick-тунелів нові
-  при кожному запуску.
-- **Опції.** `WITH_WORKER=1` запускає ще й worker. `SKIP_DB=1` — якщо Postgres і
-  Redis уже підняті вами. Логи пишуться в `.dev-stack/`.
-- **Зупинка.** Ctrl+C зупиняє все, що запустив скрипт. Контейнери БД
-  лишаються, їх зупиняє `docker compose down` у бекенді.
+- **Конфиг relay.** `.env` бэкенда не меняется: нужные значения
+  (`PORT`, `WALLET_MINI_APP_URL` = адрес кошелька, `SESSION_TTL_MS` = 7 дней)
+  передаются переменными окружения.
+- **Конфиг кошелька.** В `.env.local` кошелька записывается только строка
+  `VITE_RELAY_URL`, остальной файл не трогается.
+- **Что остаётся вам.** В конце скрипт печатает адрес кошелька. Его нужно
+  вписать в BotFather (`/myapps` → Edit Web App URL). Адреса quick-туннелей
+  новые при каждом запуске.
+- **Опции.** `WITH_WORKER=1` запускает ещё и worker. `SKIP_DB=1` — если Postgres
+  и Redis уже подняты вами. Логи пишутся в `.dev-stack/`.
+- **Остановка.** Ctrl+C останавливает всё, что запустил скрипт. Контейнеры БД
+  остаются, их останавливает `docker compose down` в бэкенде.
 
-## Розробка
+## Разработка
 
 ```bash
-npm run typecheck      # tsc --noEmit по src, test і demo
-npm test               # vitest: крипта, мапінг помилок, поллінг, handshake, сумісність із relay
+npm run typecheck      # tsc --noEmit по src, test и demo
+npm test               # vitest: крипта, маппинг ошибок, поллинг, handshake, совместимость с relay
 npm run build          # tsc -p tsconfig.build.json -> dist/
-npm run test:e2e       # ручний e2e проти живого relay
-npm run fixtures:relay # перегенерувати test/fixtures/relay-vectors.json кодом бекенду
+npm run test:e2e       # ручной e2e против живого relay
+npm run fixtures:relay # перегенерировать test/fixtures/relay-vectors.json кодом бэкенда
 ```
 
-**Сумісність із бекендом.** `test/relay-compat.test.ts` перевіряє формат трьома
-шарами: незалежною реалізацією на `node:crypto`; фіксованими векторами з
-бекенду (`test/fixtures/relay-vectors.json`: ключі, рядки підпису, підписи,
-вердикти `verifyHandshake`, шифротексти), які працюють і в CI; справжніми
-примітивами relay, якщо поруч є чекаут `../minterWallet/minter-backend` (або
-`MINTER_BACKEND_DIR`). Вектори перегенеровуйте лише разом зі зміною контракту на
-бекенді.
+**Совместимость с бэкендом.** `test/relay-compat.test.ts` проверяет формат тремя
+слоями: независимой реализацией на `node:crypto`; фиксированными векторами из
+бэкенда (`test/fixtures/relay-vectors.json`: ключи, строки подписи, подписи,
+вердикты `verifyHandshake`, шифротексты), которые работают и в CI; настоящими
+примитивами relay, если рядом есть чекаут `../minterWallet/minter-backend` (или
+`MINTER_BACKEND_DIR`). Векторы перегенерируйте только вместе с изменением
+контракта на бэкенде.
 
-Ручний e2e (relay у дев-режимі, `WEBHOOK_ALLOW_PRIVATE_NETWORK=true`: manifest
-скрипт роздає сам із `http://localhost:5179`):
+Ручной e2e (relay в dev-режиме, `WEBHOOK_ALLOW_PRIVATE_NETWORK=true`: manifest
+скрипт раздаёт сам с `http://localhost:5179`):
 
 ```bash
 cd ../minterWallet/minter-backend && docker compose up -d && npm run migrate:up && npm run dev
-# в іншому терміналі:
+# в другом терминале:
 RELAY_URL=http://localhost:3000 npm run test:e2e
 ```
