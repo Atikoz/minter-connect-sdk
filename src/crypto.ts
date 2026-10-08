@@ -1,10 +1,10 @@
 /**
- * Внутрішні крипто-примітиви: ECDH (secp256k1) + AES-GCM.
+ * Внутренние крипто-примитивы: ECDH (secp256k1) + AES-GCM.
  *
- * НЕ Є публічним API — не експортується з index.ts і заблокований полем
- * "exports" у package.json. Формат на дроті (sha256 від compressed shared
- * point як ключ AES-256-GCM, iv/ciphertext у hex) — це контракт із relay та
- * гаманцем, і його ламати не можна; сама реалізація може змінюватись.
+ * НЕ ЯВЛЯЕТСЯ публичным API — не экспортируется из index.ts и заблокирован полем
+ * "exports" в package.json. Формат на проводе (sha256 от compressed shared
+ * point как ключ AES-256-GCM, iv/ciphertext в hex) — это контракт с relay и
+ * кошельком, и его ломать нельзя; сама реализация может меняться.
  */
 
 import * as secp from '@noble/secp256k1';
@@ -23,13 +23,13 @@ export interface EncryptedPayload {
 }
 
 /**
- * Web Crypto береться ЛІНИВО, на кожен виклик.
+ * Web Crypto берётся ЛЕНИВО, на каждый вызов.
  *
- * `const subtle = globalThis.crypto.subtle` на рівні модуля виконувався б
- * під час import: у небезпечному контексті (сторінка по http:// не на
- * localhost) `crypto.subtle` === undefined, і перший же виклик падав би з
- * "Cannot read properties of undefined (reading 'importKey')" — помилкою, за
- * якою неможливо здогадатись, що причина у відсутності HTTPS.
+ * `const subtle = globalThis.crypto.subtle` на уровне модуля выполнялся бы
+ * во время import: в небезопасном контексте (страница по http:// не на
+ * localhost) `crypto.subtle` === undefined, и первый же вызов падал бы с
+ * "Cannot read properties of undefined (reading 'importKey')" — ошибкой, по
+ * которой невозможно догадаться, что причина в отсутствии HTTPS.
  */
 function getCrypto(): Crypto {
   const c = (globalThis as { crypto?: Crypto }).crypto;
@@ -79,18 +79,18 @@ export async function decryptPayload<T = unknown>(
   return JSON.parse(new TextDecoder().decode(plaintext)) as T;
 }
 
-/** Hex ephemeral-ключа для серіалізації сесії. Значення СЕКРЕТНЕ — див. MinterConnectSession.serialize(). */
+/** Hex ephemeral-ключа для сериализации сессии. Значение СЕКРЕТНОЕ — см. MinterConnectSession.serialize(). */
 export function secretKeyToHex(secretKey: Uint8Array): string {
   return secp.etc.bytesToHex(secretKey);
 }
 
 /**
- * Розбір ephemeral-ключа зі збереженого стану.
+ * Разбор ephemeral-ключа из сохранённого состояния.
  *
- * Валідація тут, а не при першому використанні, навмисно: сирі байти йдуть
- * у getSharedSecret усередині deriveSharedAesKey, і зіпсоване сховище дало б
- * помилку noble на кшталт "invalid scalar" у момент, коли DEX уже вважає
- * сесію відновленою. Краще впасти на вході з `invalid_request`.
+ * Валидация здесь, а не при первом использовании, намеренно: сырые байты идут
+ * в getSharedSecret внутри deriveSharedAesKey, и испорченное хранилище дало бы
+ * ошибку noble вроде "invalid scalar" в момент, когда DEX уже считает
+ * сессию восстановленной. Лучше упасть на входе с `invalid_request`.
  */
 export function secretKeyFromHex(hex: string): Uint8Array {
   let bytes: Uint8Array;

@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe('ECDH + AES-GCM', () => {
-  it('обидві сторони виводять один і той самий ключ', async () => {
+  it('обе стороны выводят один и тот же ключ', async () => {
     const dex = generateEphemeralKeyPair();
     const wallet = generateEphemeralKeyPair();
 
@@ -22,13 +22,13 @@ describe('ECDH + AES-GCM', () => {
     const payload = { type: '0x01', data: { to: 'Mx0000000000000000000000000000000000000001', value: '10' } };
     const encrypted = await encryptPayload(dexKey, payload);
 
-    // Головна перевірка: те, що зашифрував DEX, читає гаманець — і навпаки.
+    // Главная проверка: то, что зашифровал DEX, читает кошелёк — и наоборот.
     expect(await decryptPayload(walletKey, encrypted)).toEqual(payload);
     const back = await encryptPayload(walletKey, { signedTxHex: 'f8...' });
     expect(await decryptPayload(dexKey, back)).toEqual({ signedTxHex: 'f8...' });
   });
 
-  it('чужий ключ не розшифровує', async () => {
+  it('чужой ключ не расшифровывает', async () => {
     const dex = generateEphemeralKeyPair();
     const wallet = generateEphemeralKeyPair();
     const attacker = generateEphemeralKeyPair();
@@ -40,7 +40,7 @@ describe('ECDH + AES-GCM', () => {
     await expect(decryptPayload(attackerKey, encrypted)).rejects.toThrow();
   });
 
-  it('кожне шифрування дає новий IV', async () => {
+  it('каждое шифрование даёт новый IV', async () => {
     const dex = generateEphemeralKeyPair();
     const wallet = generateEphemeralKeyPair();
     const key = await deriveSharedAesKey(dex.secretKey, wallet.publicKeyHex);
@@ -48,15 +48,15 @@ describe('ECDH + AES-GCM', () => {
     const ivs = new Set<string>();
     for (let i = 0; i < 25; i++) {
       const { iv } = await encryptPayload(key, { same: 'payload' });
-      expect(iv).toMatch(/^[0-9a-f]{24}$/); // рівно 12 байт — вимога схеми relay
+      expect(iv).toMatch(/^[0-9a-f]{24}$/); // ровно 12 байт — требование схемы relay
       ivs.add(iv);
     }
-    // Повторний IV на тому самому ключі в AES-GCM — катастрофа (розкриває XOR
-    // відкритих текстів), тому це не стилістична, а безпекова перевірка.
+    // Повторный IV на том же ключе в AES-GCM — катастрофа (раскрывает XOR
+    // открытых текстов), поэтому это не стилистическая, а проверка безопасности.
     expect(ivs.size).toBe(25);
   });
 
-  it('змінений шифротекст відхиляється (GCM-тег)', async () => {
+  it('изменённый шифротекст отклоняется (GCM-тег)', async () => {
     const dex = generateEphemeralKeyPair();
     const wallet = generateEphemeralKeyPair();
     const key = await deriveSharedAesKey(dex.secretKey, wallet.publicKeyHex);
@@ -68,12 +68,12 @@ describe('ECDH + AES-GCM', () => {
   });
 });
 
-describe('crypto.subtle недоступний', () => {
-  it('кидає зрозумілу помилку замість "Cannot read properties of undefined"', async () => {
+describe('crypto.subtle недоступен', () => {
+  it('бросает понятную ошибку вместо "Cannot read properties of undefined"', async () => {
     const keys = generateEphemeralKeyPair();
     const peer = generateEphemeralKeyPair();
 
-    // Небезпечний контекст браузера: crypto є, crypto.subtle — немає.
+    // Небезопасный контекст браузера: crypto есть, crypto.subtle — нет.
     vi.stubGlobal('crypto', { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
 
     const err = await deriveSharedAesKey(keys.secretKey, peer.publicKeyHex).catch((e: unknown) => e);

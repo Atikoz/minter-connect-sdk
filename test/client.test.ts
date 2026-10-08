@@ -1,7 +1,7 @@
 /**
- * Конфіг клієнта: manifestUrl, walletAppLink, власний домен і тіло POST /sessions.
- * Помилки конфігу мають ловитись у конструкторі, а не після того, як юзер
- * відсканував QR і отримав handshake_invalid.
+ * Конфиг клиента: manifestUrl, walletAppLink, собственный домен и тело POST /sessions.
+ * Ошибки конфига должны ловиться в конструкторе, а не после того, как юзер
+ * отсканировал QR и получил handshake_invalid.
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -24,8 +24,8 @@ function configError(config: Record<string, unknown>): MinterConnectError {
   throw new Error('expected the constructor to throw');
 }
 
-describe('конфіг', () => {
-  it('домен за замовчуванням — host із manifestUrl, у нижньому регістрі', () => {
+describe('конфиг', () => {
+  it('домен по умолчанию — host из manifestUrl, в нижнем регистре', () => {
     expect(new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG }).domain).toBe(TEST_DOMAIN);
     expect(
       new MinterConnectClient({ ...TEST_CLIENT_CONFIG, relayUrl: RELAY_URL, manifestUrl: 'https://DEX.Test:443/m.json' })
@@ -37,20 +37,20 @@ describe('конфіг', () => {
     ).toBe('dex.test:8443');
   });
 
-  it('явний domain, що не збігається з host manifestUrl, — invalid_request одразу', () => {
+  it('явный domain, который не совпадает с host manifestUrl, — invalid_request сразу', () => {
     expect(configError({ domain: 'other.test' }).code).toBe('invalid_request');
     expect(new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG, domain: 'DEX.test' }).domain).toBe(
       TEST_DOMAIN,
     );
   });
 
-  it('manifestUrl лише https', () => {
+  it('manifestUrl только https', () => {
     expect(configError({ manifestUrl: 'http://dex.test/m.json' }).code).toBe('invalid_request');
     expect(configError({ manifestUrl: 'not a url' }).code).toBe('invalid_request');
     expect(configError({ manifestUrl: 'ftp://dex.test/m.json' }).code).toBe('invalid_request');
   });
 
-  it('http дозволений лише для localhost (дев-режим relay)', () => {
+  it('http разрешён только для localhost (dev-режим relay)', () => {
     const local = new MinterConnectClient({
       ...TEST_CLIENT_CONFIG,
       relayUrl: RELAY_URL,
@@ -68,7 +68,7 @@ describe('конфіг', () => {
 });
 
 describe('createSession', () => {
-  it('шле { dexPublicKeyHex, manifestUrl, callbackUrl? } і будує deepLink з walletAppLink', async () => {
+  it('шлёт { dexPublicKeyHex, manifestUrl, callbackUrl? } и строит deepLink из walletAppLink', async () => {
     const stub = createFetchStub(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     vi.stubGlobal('fetch', stub.fetch);
 
@@ -86,11 +86,11 @@ describe('createSession', () => {
       callbackUrl: 'https://dex.test/hooks/minter',
     });
     expect(session.deepLink).toBe(`${TEST_WALLET_APP_LINK}?startapp=connect_${FAKE_SESSION_ID}`);
-    // dexToken не потрапляє в посилання ніколи.
+    // dexToken не попадает в ссылку никогда.
     expect(session.deepLink).not.toContain(createdSessionReply(FAKE_SESSION_ID).dexToken as string);
   });
 
-  it('без callbackUrl поле не надсилається взагалі (relay відкидає зайві/порожні)', async () => {
+  it('без callbackUrl поле не отправляется вообще (relay отвергает лишние/пустые)', async () => {
     const stub = createFetchStub(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     vi.stubGlobal('fetch', stub.fetch);
 
@@ -98,7 +98,7 @@ describe('createSession', () => {
     expect(Object.keys(stub.calls[0]!.body as object).sort()).toEqual(['dexPublicKeyHex', 'manifestUrl']);
   });
 
-  it('relay без dexToken у відповіді (старий) -> relay_error, а не сесія, яка ніколи не запрацює', async () => {
+  it('relay без dexToken в ответе (старый) -> relay_error, а не сессия, которая никогда не заработает', async () => {
     const stub = createFetchStub(() => ({ json: { sessionId: FAKE_SESSION_ID, expiresAt: null } }));
     vi.stubGlobal('fetch', stub.fetch);
 

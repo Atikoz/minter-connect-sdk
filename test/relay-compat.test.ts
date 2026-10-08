@@ -1,17 +1,17 @@
 /**
- * Сумісність формату на дроті.
+ * Совместимость формата на проводе.
  *
- * src/crypto.ts — вже третя копія тих самих примітивів у проєкті (relay,
- * гаманець, SDK). Копії розходяться тихо: жодна з них не імпортує іншу, тож
- * зміна KDF чи довжини IV в одній компілюється й проходить її власні тести —
- * а ламається тільки у продакшні, у вигляді "гаманець підписав неправильно".
+ * src/crypto.ts — уже третья копия тех же примитивов в проекте (relay,
+ * кошелёк, SDK). Копии расходятся тихо: ни одна из них не импортирует другую, поэтому
+ * изменение KDF или длины IV в одной компилируется и проходит её собственные тесты —
+ * а ломается только в продакшене, в виде "кошелёк подписал неправильно".
  *
- * Тому тут формат перевіряється ТРИЧІ:
- *  1. незалежною реалізацією на node:crypto — вона є завжди;
- *  2. фіксованими векторами з бекенду (test/fixtures/relay-vectors.json,
- *     `npm run fixtures:relay`) — вони теж є завжди, зокрема в CI, де
- *     сусіднього чекауту бекенду немає;
- *  3. справжніми примітивами relay, якщо сусідній чекаут на місці.
+ * Поэтому здесь формат проверяется ТРИЖДЫ:
+ *  1. независимой реализацией на node:crypto — она есть всегда;
+ *  2. фиксированными векторами из бэкенда (test/fixtures/relay-vectors.json,
+ *     `npm run fixtures:relay`) — они тоже есть всегда, в том числе в CI, где
+ *     соседнего чекаута бэкенда нет;
+ *  3. настоящими примитивами relay, если соседний чекаут на месте.
  */
 
 import { createHash, createDecipheriv, createCipheriv } from 'node:crypto';
@@ -35,14 +35,14 @@ import { createSimulatedWallet, publicKeyToMinterAddress, signMessage, verifyMes
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-/** Контракт: ключ AES-256 = sha256(compressed ECDH shared point, 33 байти). */
+/** Контракт: ключ AES-256 = sha256(compressed ECDH shared point, 33 байта). */
 function sharedAesKeyBytes(mySecretKey: Uint8Array, theirPublicKeyHex: string): Buffer {
   const shared = secp.getSharedSecret(mySecretKey, secp.etc.hexToBytes(theirPublicKeyHex));
   expect(shared).toHaveLength(33);
   return createHash('sha256').update(Buffer.from(shared)).digest();
 }
 
-/** Контракт: AES-256-GCM, IV 12 байт, на дроті ciphertext = ct || tag(16). */
+/** Контракт: AES-256-GCM, IV 12 байт, на проводе ciphertext = ct || tag(16). */
 function decryptIndependently(keyBytes: Buffer, payload: { iv: string; ciphertext: string }): unknown {
   const raw = Buffer.from(payload.ciphertext, 'hex');
   const tag = raw.subarray(raw.length - 16);
@@ -59,8 +59,8 @@ function encryptIndependently(keyBytes: Buffer, data: unknown): { iv: string; ci
   return { iv: iv.toString('hex'), ciphertext: Buffer.concat([body, cipher.getAuthTag()]).toString('hex') };
 }
 
-describe('формат на дроті (незалежна реалізація)', () => {
-  it('шифротекст SDK читається сторонньою реалізацією контракту', async () => {
+describe('формат на проводе (независимая реализация)', () => {
+  it('шифротекст SDK читается сторонней реализацией контракта', async () => {
     const dex = generateEphemeralKeyPair();
     const wallet = generateEphemeralKeyPair();
 
@@ -71,7 +71,7 @@ describe('формат на дроті (незалежна реалізація)
     expect(decryptIndependently(sharedAesKeyBytes(wallet.secretKey, dex.publicKeyHex), encrypted)).toEqual(payload);
   });
 
-  it('шифротекст сторонньої реалізації читається SDK', async () => {
+  it('шифротекст сторонней реализации читается SDK', async () => {
     const dex = generateEphemeralKeyPair();
     const wallet = generateEphemeralKeyPair();
 
@@ -83,13 +83,13 @@ describe('формат на дроті (незалежна реалізація)
     expect(await decryptPayload(sdkKey, fromWallet)).toEqual({ signedTxHex: 'f8aa01' });
   });
 
-  it('публічний ключ SDK підходить під схему relay (66 hex, compressed)', () => {
+  it('публичный ключ SDK подходит под схему relay (66 hex, compressed)', () => {
     for (let i = 0; i < 10; i++) {
       expect(generateEphemeralKeyPair().publicKeyHex).toMatch(/^[0-9a-fA-F]{66}$/);
     }
   });
 
-  it('iv і ciphertext підходять під схему relay', async () => {
+  it('iv и ciphertext подходят под схему relay', async () => {
     const a = generateEphemeralKeyPair();
     const b = generateEphemeralKeyPair();
     const { iv, ciphertext } = await encryptPayload(await deriveSharedAesKey(a.secretKey, b.publicKeyHex), {
@@ -105,24 +105,24 @@ describe('формат на дроті (незалежна реалізація)
   });
 });
 
-describe('формат ключа гаманця', () => {
-  it('адреса виводиться з 64 байт координат БЕЗ префікса 0x04', () => {
+describe('формат ключа кошелька', () => {
+  it('адрес выводится из 64 байт координат БЕЗ префикса 0x04', () => {
     const wallet = createSimulatedWallet();
     expect(wallet.address).toMatch(/^Mx[0-9a-fA-F]{40}$/);
 
     const uncompressed65 = secp.Point.fromBytes(secp.etc.hexToBytes(wallet.identity.publicKeyHex)).toBytes(false);
 
-    // Усі три подання одного ключа дають ОДНУ адресу.
+    // Все три представления одного ключа дают ОДИН адрес.
     expect(publicKeyToMinterAddress(hex(uncompressed65))).toBe(wallet.address);
     expect(publicKeyToMinterAddress(hex(uncompressed65.subarray(1)))).toBe(wallet.address);
 
-    // А keccak від усіх 65 байт (разом із префіксом 0x04) — іншу, і жодної
-    // помилки при цьому не буде: саме так тихо ламається перевірка адреси.
+    // А keccak от всех 65 байт (вместе с префиксом 0x04) — другой, и никакой
+    // ошибки при этом не будет: именно так тихо ломается проверка адреса.
     const wrong = `Mx${hex(keccak_256(uncompressed65).slice(-20))}`;
     expect(wrong).not.toBe(wallet.address);
   });
 
-  it('secp.verify на 64-байтному ключі повертає false БЕЗ помилки — саме тому ключі скрізь compressed', () => {
+  it('secp.verify на 64-байтном ключе возвращает false БЕЗ ошибки — именно поэтому ключи везде compressed', () => {
     const wallet = createSimulatedWallet();
     const signature = signMessage(wallet.identity.secretKey, 'session-id');
 
@@ -135,13 +135,13 @@ describe('формат ключа гаманця', () => {
     } catch {
       result = 'threw';
     }
-    // Головна пастка: НЕ виняток, а тихе false — збій виглядає як
-    // "користувач підписав неправильно", хоча підпис валідний.
+    // Главная ловушка: НЕ исключение, а тихое false — сбой выглядит как
+    // "пользователь подписал неправильно", хотя подпись валидна.
     expect(result).not.toBe(true);
   });
 });
 
-/* Другий рівень: фіксовані вектори, згенеровані кодом бекенду. */
+/* Второй уровень: фиксированные векторы, сгенерированные кодом бэкенда. */
 interface Vectors {
   keys: Record<'identity' | 'walletEcdh' | 'dexEcdh' | 'other', { secretKeyHex: string; publicKeyHex: string }>;
   walletAddress: string;
@@ -160,24 +160,24 @@ interface Vectors {
 }
 const vectors = JSON.parse(readFileSync(new URL('./fixtures/relay-vectors.json', import.meta.url), 'utf8')) as Vectors;
 
-describe('вектори бекенду (test/fixtures/relay-vectors.json)', () => {
+describe('векторы бэкенда (test/fixtures/relay-vectors.json)', () => {
   const sk = (hex: string) => secp.etc.hexToBytes(hex);
 
-  it('адреса з identity-ключа', () => {
+  it('адрес из identity-ключа', () => {
     expect(sdkPublicKeyToMinterAddress(vectors.keys.identity.publicKeyHex)).toBe(vectors.walletAddress);
   });
 
-  it('рядок handshake збігається байт у байт', () => {
+  it('строка handshake совпадает байт в байт', () => {
     const { sessionId, ecdhPublicKeyHex, domain, issuedAt } = vectors.handshake.input;
     expect(sdkHandshakeMessage(sessionId, ecdhPublicKeyHex, domain, issuedAt)).toBe(vectors.handshake.message);
   });
 
-  it('підпис гаманця над рядком handshake перевіряється (і він детермінований)', () => {
+  it('подпись кошелька над строкой handshake проверяется (и она детерминирована)', () => {
     expect(verifyMessage(vectors.keys.identity.publicKeyHex, vectors.handshake.message, vectors.handshake.signature)).toBe(true);
     expect(signMessage(sk(vectors.keys.identity.secretKeyHex), vectors.handshake.message)).toBe(vectors.handshake.signature);
   });
 
-  it('допуск на розбіг годинників той самий, що в relay', () => {
+  it('допуск на расхождение часов тот же, что в relay', () => {
     expect(PROOF_MAX_CLOCK_SKEW_MS).toBe(vectors.handshake.proofMaxAgeMs);
   });
 
@@ -187,7 +187,7 @@ describe('вектори бекенду (test/fixtures/relay-vectors.json)', () 
     });
   }
 
-  it('SDK читає шифротексти, зроблені бекендом на стороні гаманця', async () => {
+  it('SDK читает шифротексты, сделанные бэкендом на стороне кошелька', async () => {
     const dexKey = await deriveSharedAesKey(sk(vectors.keys.dexEcdh.secretKeyHex), vectors.keys.walletEcdh.publicKeyHex);
     expect(await decryptPayload(dexKey, vectors.e2e.request.encrypted)).toEqual(vectors.e2e.request.plaintext);
     expect(await decryptPayload(dexKey, vectors.e2e.signed.encrypted)).toEqual(vectors.e2e.signed.plaintext);
@@ -196,12 +196,12 @@ describe('вектори бекенду (test/fixtures/relay-vectors.json)', () 
     }
   });
 
-  it('запит SDK має рівно ту форму, що й вектор (включно з порядком полів)', () => {
+  it('запрос SDK имеет ровно ту форму, что и вектор (включая порядок полей)', () => {
     const { params } = vectors.e2e.request.plaintext as { params: { to: string; amount: string; coin: string } };
     expect(JSON.stringify(buildSendTransactionRequest(params))).toBe(JSON.stringify(vectors.e2e.request.plaintext));
   });
 
-  it('коди відмов гаманця мапляться в коди SDK', () => {
+  it('коды отказов кошелька мапятся в коды SDK', () => {
     const expected: Record<string, string> = {
       user_rejected: 'signing_rejected',
       bad_request: 'wallet_bad_request',
@@ -216,15 +216,15 @@ describe('вектори бекенду (test/fixtures/relay-vectors.json)', () 
   });
 });
 
-/* Третій рівень: справжні примітиви relay, якщо сусідній чекаут доступний. */
+/* Третий уровень: настоящие примитивы relay, если соседний чекаут доступен. */
 const BACKEND_DIR = resolve(process.env.MINTER_BACKEND_DIR ?? resolve(process.cwd(), '../minterWallet/minter-backend'));
 const RELAY_CRYPTO = resolve(BACKEND_DIR, 'src/shared/crypto-utils.ts');
 const RELAY_ADDRESS = resolve(BACKEND_DIR, 'src/shared/address.ts');
 const RELAY_HANDSHAKE = resolve(BACKEND_DIR, 'src/shared/handshake.ts');
 const relayAvailable = existsSync(RELAY_CRYPTO) && existsSync(RELAY_ADDRESS) && existsSync(RELAY_HANDSHAKE);
 
-describe.skipIf(!relayAvailable)('сумісність із примітивами relay (сусідній чекаут)', () => {
-  it('SDK -> relay і relay -> SDK', async () => {
+describe.skipIf(!relayAvailable)('совместимость с примитивами relay (соседний чекаут)', () => {
+  it('SDK -> relay и relay -> SDK', async () => {
     const relay = (await import(pathToFileURL(RELAY_CRYPTO).href)) as typeof import('../src/crypto.js') & {
       generateEphemeralKeyPair: typeof generateEphemeralKeyPair;
     };
@@ -240,7 +240,7 @@ describe.skipIf(!relayAvailable)('сумісність із примітивам
     expect(await decryptPayload(sdkKey, await relay.encryptPayload(relayKey, payload))).toEqual(payload);
   });
 
-  it('адреса, виведена тестовим гаманцем, збігається з тією, яку виводить relay', async () => {
+  it('адрес, выведенный тестовым кошельком, совпадает с тем, который выводит relay', async () => {
     const relayAddress = (await import(pathToFileURL(RELAY_ADDRESS).href)) as {
       publicKeyToMinterAddress: (hex: string) => string;
       isMinterAddress: (v: string) => boolean;
@@ -251,7 +251,7 @@ describe.skipIf(!relayAvailable)('сумісність із примітивам
     expect(relayAddress.publicKeyToMinterAddress(wallet.identity.publicKeyHex)).toBe(wallet.address);
   });
 
-  it('рядок і вердикти handshake збігаються з relay на випадкових ключах', async () => {
+  it('строка и вердикты handshake совпадают с relay на случайных ключах', async () => {
     const relayHandshake = (await import(pathToFileURL(RELAY_HANDSHAKE).href)) as {
       canonicalMessage: { handshake: (sessionId: string, ecdh: string, domain: string, issuedAt: number) => string };
       verifyHandshake: (claim: HandshakeClaim, expect: HandshakeExpectations) => string | null;
@@ -261,13 +261,13 @@ describe.skipIf(!relayAvailable)('сумісність із примітивам
     const sessionId = '11111111-2222-4333-8444-555555555555';
     const issuedAt = Date.now();
 
-    // Формат повідомлення — це і є контракт: розбіжність в одному символі
-    // дає невалідний підпис, який виглядає як "користувач підписав не те".
+    // Формат сообщения — это и есть контракт: расхождение в одном символе
+    // даёт невалидную подпись, которая выглядит как "пользователь подписал не то".
     expect(sdkHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex, 'Dex.Example:8443', issuedAt)).toBe(
       relayHandshake.canonicalMessage.handshake(sessionId, wallet.ecdh.publicKeyHex, 'Dex.Example:8443', issuedAt),
     );
 
-    // Доказ, зібраний як його збирає гаманець, обидві реалізації оцінюють однаково.
+    // Доказательство, собранное так, как его собирает кошелёк, обе реализации оценивают одинаково.
     const claim: HandshakeClaim = {
       sessionId,
       walletAddress: wallet.address,

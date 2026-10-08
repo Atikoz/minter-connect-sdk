@@ -1,10 +1,10 @@
 /**
- * Перевірка доказу handshake на боці DEX.
+ * Проверка доказательства handshake на стороне DEX.
  *
- * Сценарій, від якого це захищає: relay (або TLS-термінуючий проксі перед ним)
- * віддає SDK СВІЙ ECDH-ключ замість ключа гаманця. Далі relay читає всі
- * "E2E-зашифровані" транзакції, перешифровує їх для гаманця, і жодна перевірка
- * адреси цього не помічає — адреса ж справжня.
+ * Сценарий, от которого это защищает: relay (или TLS-терминирующий прокси перед ним)
+ * отдаёт SDK СВОЙ ECDH-ключ вместо ключа кошелька. Дальше relay читает все
+ * "E2E-зашифрованные" транзакции, перешифровывает их для кошелька, и ни одна проверка
+ * адреса этого не замечает — адрес-то настоящий.
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -54,11 +54,11 @@ function honestClaim(wallet: SimulatedWallet, domain = TEST_DOMAIN, issuedAt = N
 }
 
 describe('verifyHandshake', () => {
-  it('приймає чесний доказ', () => {
+  it('принимает честное доказательство', () => {
     expect(verifyHandshake(honestClaim(createSimulatedWallet()), EXPECT)).toBeNull();
   });
 
-  it('регістр hex і домену не впливає на результат', () => {
+  it('регистр hex и домена не влияет на результат', () => {
     const wallet = createSimulatedWallet();
     const claim = honestClaim(wallet);
     expect(
@@ -75,18 +75,18 @@ describe('verifyHandshake', () => {
     ).toBeNull();
   });
 
-  it('чужий домен -> domain_mismatch, навіть із валідним підписом', () => {
-    // Гаманець чесно підписав фішинговий сайт; relay пересилає цей доказ нам.
+  it('чужой домен -> domain_mismatch, даже с валидной подписью', () => {
+    // Кошелёк честно подписал фишинговый сайт; relay пересылает это доказательство нам.
     const claim = honestClaim(createSimulatedWallet(), 'dex-test.phish');
     expect(verifyHandshake(claim, EXPECT)).toBe('domain_mismatch');
   });
 
-  it('relay підмінив домен у відповіді на наш -> invalid_signature', () => {
+  it('relay подменил домен в ответе на наш -> invalid_signature', () => {
     const claim = honestClaim(createSimulatedWallet(), 'dex-test.phish');
     expect(verifyHandshake({ ...claim, domain: TEST_DOMAIN }, EXPECT)).toBe('invalid_signature');
   });
 
-  it('свіжість: старий підпис і підпис "з майбутнього" -> stale_proof', () => {
+  it('свежесть: старая подпись и подпись "из будущего" -> stale_proof', () => {
     const wallet = createSimulatedWallet();
     expect(verifyHandshake(honestClaim(wallet, TEST_DOMAIN, NOW - 10 * 60_000 - 1), EXPECT)).toBe('stale_proof');
     expect(verifyHandshake(honestClaim(wallet, TEST_DOMAIN, NOW + 120_001), EXPECT)).toBe('stale_proof');
@@ -94,7 +94,7 @@ describe('verifyHandshake', () => {
     expect(verifyHandshake({ ...honestClaim(wallet), issuedAt: Number.NaN }, EXPECT)).toBe('stale_proof');
   });
 
-  it('maxAgeMs: Infinity вимикає лише "надто старий", а не "з майбутнього"', () => {
+  it('maxAgeMs: Infinity отключает только "слишком старую", а не "из будущего"', () => {
     const wallet = createSimulatedWallet();
     const week = 7 * 24 * 3600_000;
     const noFreshness = { ...EXPECT, maxAgeMs: Number.POSITIVE_INFINITY };
@@ -102,12 +102,12 @@ describe('verifyHandshake', () => {
     expect(verifyHandshake(honestClaim(wallet, TEST_DOMAIN, NOW + 120_001), noFreshness)).toBe('stale_proof');
   });
 
-  it('адреса має виводитись саме з identity-ключа', () => {
+  it('адрес должен выводиться именно из identity-ключа', () => {
     const claim = honestClaim(createSimulatedWallet());
     expect(verifyHandshake({ ...claim, walletAddress: createSimulatedWallet().address }, EXPECT)).toBe('address_mismatch');
   });
 
-  it('підпис прив\'язаний до sessionId, ECDH-ключа і issuedAt', () => {
+  it('подпись привязана к sessionId, ECDH-ключу и issuedAt', () => {
     const claim = honestClaim(createSimulatedWallet());
     expect(verifyHandshake({ ...claim, sessionId: '00000000-0000-4000-8000-000000000000' }, EXPECT)).toBe('invalid_signature');
     expect(verifyHandshake({ ...claim, ecdhPublicKeyHex: createSimulatedWallet().ecdh.publicKeyHex }, EXPECT)).toBe(
@@ -116,13 +116,13 @@ describe('verifyHandshake', () => {
     expect(verifyHandshake({ ...claim, issuedAt: claim.issuedAt + 1 }, EXPECT)).toBe('invalid_signature');
   });
 
-  it('структурно зіпсований ввід — теж відмова, а не виняток', () => {
+  it('структурно испорченный ввод — тоже отказ, а не исключение', () => {
     const claim = honestClaim(createSimulatedWallet());
     expect(verifyHandshake({ ...claim, signature: 'не hex' }, EXPECT)).toBe('invalid_signature');
     expect(verifyHandshake({ ...claim, walletAddress: 'Mx_not_an_address' }, EXPECT)).toBe('address_mismatch');
   });
 
-  it('адреса рахується від 64 байт координат; рядок підпису в нижньому регістрі', () => {
+  it('адрес считается от 64 байт координат; строка подписи в нижнем регистре', () => {
     const wallet = createSimulatedWallet();
     expect(publicKeyToMinterAddress(wallet.identity.publicKeyHex)).toBe(wallet.address);
     expect(handshakeMessage(FAKE_SESSION_ID, 'AB'.repeat(33), 'Dex.Test', 1)).toBe(
@@ -131,8 +131,8 @@ describe('verifyHandshake', () => {
   });
 });
 
-describe('waitForConnection перевіряє доказ', () => {
-  it('чесний relay -> handshakeVerified: true', async () => {
+describe('waitForConnection проверяет доказательство', () => {
+  it('честный relay -> handshakeVerified: true', async () => {
     const wallet = createSimulatedWallet();
     const client = clientReturning(connectedSessionPayload(wallet, FAKE_SESSION_ID));
     const session = await client.createSession();
@@ -144,11 +144,11 @@ describe('waitForConnection перевіряє доказ', () => {
     expect(result.walletAddress).toBe(wallet.address);
   });
 
-  it('relay підмінив ECDH-ключ каналу -> handshake_invalid', async () => {
+  it('relay подменил ECDH-ключ канала -> handshake_invalid', async () => {
     const wallet = createSimulatedWallet();
     const mitm = createSimulatedWallet();
     const payload = connectedSessionPayload(wallet, FAKE_SESSION_ID);
-    // Адреса й підпис справжні; підмінено лише ключ, на якому будується канал.
+    // Адрес и подпись настоящие; подменён только ключ, на котором строится канал.
     payload.walletPublicKeyHex = mitm.ecdh.publicKeyHex;
 
     const client = clientReturning(payload);
@@ -160,11 +160,11 @@ describe('waitForConnection перевіряє доказ', () => {
 
     expect(err.code).toBe('handshake_invalid');
     expect(err.relayError).toBe('invalid_signature');
-    // Не пропонуємо автоматичне перепідключення: воно піде в той самий relay.
+    // Не предлагаем автоматическое переподключение: оно пойдёт в тот же relay.
     expect(err.requiresReconnect).toBe(false);
   });
 
-  it('relay назвав чужу адресу -> handshake_invalid (address_mismatch)', async () => {
+  it('relay назвал чужой адрес -> handshake_invalid (address_mismatch)', async () => {
     const wallet = createSimulatedWallet();
     const payload = connectedSessionPayload(wallet, FAKE_SESSION_ID);
     payload.walletAddress = createSimulatedWallet().address;
@@ -180,8 +180,8 @@ describe('waitForConnection перевіряє доказ', () => {
     expect(err.relayError).toBe('address_mismatch');
   });
 
-  it('гаманець підписав чужий домен -> handshake_invalid (domain_mismatch)', async () => {
-    // Домен у відповіді relay — заявка, а не істина: SDK звіряє з доменом із конфігу.
+  it('кошелёк подписал чужой домен -> handshake_invalid (domain_mismatch)', async () => {
+    // Домен в ответе relay — заявка, а не истина: SDK сверяет с доменом из конфига.
     const wallet = createSimulatedWallet();
     const client = clientReturning(connectedSessionPayload(wallet, FAKE_SESSION_ID, { domain: 'evil.example' }));
     const session = await client.createSession();
@@ -195,7 +195,7 @@ describe('waitForConnection перевіряє доказ', () => {
     expect(session.isConnected).toBe(false);
   });
 
-  it('старий handshake у waitForConnection -> handshake_invalid (stale_proof)', async () => {
+  it('старый handshake в waitForConnection -> handshake_invalid (stale_proof)', async () => {
     const wallet = createSimulatedWallet();
     const client = clientReturning(
       connectedSessionPayload(wallet, FAKE_SESSION_ID, { issuedAt: Date.now() - 11 * 60_000 }),
@@ -210,7 +210,7 @@ describe('waitForConnection перевіряє доказ', () => {
     expect(err.relayError).toBe('stale_proof');
   });
 
-  it('relay без доказу -> handshake_unverifiable', async () => {
+  it('relay без доказательства -> handshake_unverifiable', async () => {
     const wallet = createSimulatedWallet();
     const payload = connectedSessionPayload(wallet, FAKE_SESSION_ID);
     payload.identityPublicKeyHex = null;
@@ -226,7 +226,7 @@ describe('waitForConnection перевіряє доказ', () => {
     expect(err.code).toBe('handshake_unverifiable');
   });
 
-  it('requireHandshakeProof: false — підключається, але чесно каже, що не перевірено', async () => {
+  it('requireHandshakeProof: false — подключается, но честно говорит, что не проверено', async () => {
     const wallet = createSimulatedWallet();
     const payload = connectedSessionPayload(wallet, FAKE_SESSION_ID);
     payload.identityPublicKeyHex = null;

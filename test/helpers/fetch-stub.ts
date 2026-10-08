@@ -1,16 +1,16 @@
 /**
- * Мінімальний стаб fetch: рівно стільки, щоб перевірити мапінг статусів relay
- * у коди SDK, не піднімаючи ані relay, ані HTTP-сервер.
+ * Минимальный стаб fetch: ровно столько, чтобы проверить маппинг статусов relay
+ * в коды SDK, не поднимая ни relay, ни HTTP-сервер.
  */
 
 export interface StubReply {
   status?: number;
-  /** Тіло, яке буде сериалізоване в JSON. */
+  /** Тело, которое будет сериализовано в JSON. */
   json?: unknown;
-  /** Сире тіло — для перевірки не-JSON відповідей (HTML від проксі тощо). */
+  /** Сырое тело — для проверки не-JSON ответов (HTML от прокси и т. п.). */
   text?: string;
   headers?: Record<string, string>;
-  /** Ніколи не відповідати — імітація завислого з'єднання. */
+  /** Никогда не отвечать — имитация зависшего соединения. */
   hang?: boolean;
 }
 
@@ -43,11 +43,11 @@ export function createFetchStub(handler: StubHandler): FetchStub {
     const reply = await handler(call, calls.length - 1);
 
     if (reply.hang) {
-      // Зависле з'єднання: відповідь не приходить ніколи, вийти можна лише
-      // через AbortSignal — саме те, що має зробити таймаут окремого запиту.
+      // Зависшее соединение: ответ не приходит никогда, выйти можно только
+      // через AbortSignal — именно то, что должен сделать таймаут отдельного запроса.
       return new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
-        if (!signal) return; // висимо назавжди — тест має впасти по своєму таймауту
+        if (!signal) return; // висим навсегда — тест должен упасть по своему таймауту
         const onAbort = () => reject(abortError(signal));
         if (signal.aborted) onAbort();
         else signal.addEventListener('abort', onAbort, { once: true });
@@ -76,6 +76,6 @@ function normalizeHeaders(headers: HeadersInit | undefined): Record<string, stri
   return out;
 }
 
-/** UUID-подібні значення, щоб тестові дані були схожі на справжні відповіді relay. */
+/** UUID-подобные значения, чтобы тестовые данные были похожи на настоящие ответы relay. */
 export const FAKE_SESSION_ID = '11111111-2222-4333-8444-555555555555';
 export const FAKE_REQ_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';

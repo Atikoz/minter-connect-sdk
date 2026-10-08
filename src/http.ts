@@ -1,42 +1,42 @@
 /**
- * Транспорт до relay: один fetch, один таймаут, одна таблиця помилок.
+ * Транспорт к relay: один fetch, один таймаут, одна таблица ошибок.
  *
- * Причина існування окремого модуля — щоб client.ts і session.ts мапили
- * відповіді relay ОДНАКОВО. Раніше кожен мав власний `if (!res.ok) throw
- * network_error`, і DEX отримував "мережеву помилку" однаково на 400
- * (помилка інтегратора), 410 (користувач відкликав доступ) і 429 (ліміт) —
- * тобто у двох випадках із трьох ретрай був безглуздий, а SDK його заохочував.
+ * Причина существования отдельного модуля — чтобы client.ts и session.ts мапили
+ * ответы relay ОДИНАКОВО. Раньше каждый имел собственный `if (!res.ok) throw
+ * network_error`, и DEX получал "сетевую ошибку" одинаково на 400
+ * (ошибка интегратора), 410 (пользователь отозвал доступ) и 429 (лимит) —
+ * то есть в двух случаях из трёх ретрай был бессмыслен, а SDK его поощрял.
  */
 
 import { MinterConnectError, type MinterConnectErrorCode } from './types.js';
 
-/** Таймаут на ОДИН запит. Не плутати з timeoutMs циклів очікування. */
+/** Таймаут на ОДИН запрос. Не путать с timeoutMs циклов ожидания. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
- * Пауза для `rate_limited`, коли relay не дав Retry-After. Так буває з лімітами
- * сесії (`too_many_pending_requests`, `session_rate_limited`): їх рахує сам
- * маршрут, а не плагін rate-limit, тож заголовка немає.
+ * Пауза для `rate_limited`, когда relay не дал Retry-After. Так бывает с лимитами
+ * сессии (`too_many_pending_requests`, `session_rate_limited`): их считает сам
+ * маршрут, а не плагин rate-limit, поэтому заголовка нет.
  */
 export const DEFAULT_RETRY_AFTER_MS = 5_000;
 
 export interface RelayRequestOptions {
   method?: 'GET' | 'POST' | 'PUT';
   body?: unknown;
-  /** Зовнішнє скасування: session.close() перериває запити, що вже в польоті. */
+  /** Внешняя отмена: session.close() прерывает запросы, которые уже в полёте. */
   signal?: AbortSignal;
-  /** Таймаут саме цього запиту. За замовчуванням DEFAULT_REQUEST_TIMEOUT_MS. */
+  /** Таймаут именно этого запроса. По умолчанию DEFAULT_REQUEST_TIMEOUT_MS. */
   timeoutMs?: number;
-  /** Наскрізний X-Request-Id: relay використає його як traceId у своїх логах і у вебхуку. */
+  /** Сквозной X-Request-Id: relay использует его как traceId в своих логах и в вебхуке. */
   requestId?: string;
-  /** dexToken сесії: іде як `Authorization: Bearer <token>` на маршрути DEX. */
+  /** dexToken сессии: идёт как `Authorization: Bearer <token>` на маршруты DEX. */
   authToken?: string;
 }
 
 /**
- * Поле `error` з тіла relay -> код SDK. Мапимо саме за рядком, а не лише за
- * статусом: 410 буває трьох різних сортів (сесію відкликали / сесія протухла /
- * протух конкретний запит), і для DEX це три різні реакції.
+ * Поле `error` из тела relay -> код SDK. Мапим именно по строке, а не только по
+ * статусу: 410 бывает трёх разных сортов (сессию отозвали / сессия протухла /
+ * протух конкретный запрос), и для DEX это три разные реакции.
  */
 const RELAY_ERROR_CODES: Record<string, MinterConnectErrorCode> = {
   session_not_found: 'session_not_found',
@@ -62,12 +62,12 @@ const RELAY_ERROR_CODES: Record<string, MinterConnectErrorCode> = {
 export async function relayFetch<T>(url: string, options: RelayRequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, requestId, authToken } = options;
 
-  // Таймаут вішається на КОЖЕН запит. Без цього зависле TCP-з'єднання тримає
-  // await нескінченно, і заявлений timeoutMs циклу поллінгу не спрацьовує —
-  // він перевіряється лише МІЖ ітераціями, до яких справа так і не доходить.
+  // Таймаут вешается на КАЖДЫЙ запрос. Без этого зависшее TCP-соединение держит
+  // await бесконечно, и заявленный timeoutMs цикла поллинга не срабатывает —
+  // он проверяется только МЕЖДУ итерациями, до которых дело так и не доходит.
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  // AbortSignal.any є в Node з 20.3 (engines вимагає >= 20.19) і в усіх
-  // актуальних браузерах, але типи DOM у цій версії TS про нього ще не знають.
+  // AbortSignal.any есть в Node с 20.3 (engines требует >= 20.19) и во всех
+  // актуальных браузерах, но типы DOM в этой версии TS о нём ещё не знают.
   const composedSignal = signal
     ? (AbortSignal as typeof AbortSignal & { any(signals: AbortSignal[]): AbortSignal }).any([signal, timeoutSignal])
     : timeoutSignal;
@@ -122,20 +122,20 @@ async function toMinterConnectError(res: Response, url: string): Promise<MinterC
 }
 
 /**
- * Фолбек, коли `error` у тілі не з нашої таблиці — наприклад помилка
- * валідації Fastify (там `error: "Bad Request"`) або 404 на неіснуючий маршрут.
+ * Фолбэк, когда `error` в теле не из нашей таблицы — например ошибка
+ * валидации Fastify (там `error: "Bad Request"`) или 404 на несуществующий маршрут.
  */
 function codeFromStatus(status: number): MinterConnectErrorCode {
   if (status === 400) return 'invalid_request';
-  // 401/403 на маршрутах DEX — це завжди dexToken. Повтор з тим самим токеном
-  // дасть те саме, тому НЕ relay_error (той вважається тимчасовим).
+  // 401/403 на маршрутах DEX — это всегда dexToken. Повтор с тем же токеном
+  // даст то же самое, поэтому НЕ relay_error (тот считается временным).
   if (status === 401 || status === 403) return 'unauthorized';
   if (status === 409) return 'already_finalized';
-  // Будь-який 410 означає "цього більше немає, перепідключайся" — і це
-  // важливіше за точну причину, тому дефолт саме session_expired, а не
-  // загальний relay_error, який виглядав би як тимчасовий збій.
+  // Любой 410 означает "этого больше нет, переподключайся" — и это
+  // важнее точной причины, поэтому дефолт именно session_expired, а не
+  // общий relay_error, который выглядел бы как временный сбой.
   if (status === 410) return 'session_expired';
-  // 422 relay віддає лише на manifest: це конфіг сайту, а не збій relay.
+  // 422 relay отдаёт только на manifest: это конфиг сайта, а не сбой relay.
   if (status === 422) return 'invalid_manifest';
   if (status === 429) return 'rate_limited';
   return 'relay_error';
@@ -152,13 +152,13 @@ async function readErrorBody(res: Response): Promise<{ error?: string; message?:
       };
     }
   } catch {
-    // Не-JSON тіло (наприклад HTML від проксі перед relay) — не привід
-    // втратити сам факт помилки; статус ми вже маємо.
+    // Не-JSON тело (например HTML от прокси перед relay) — не повод
+    // потерять сам факт ошибки; статус у нас уже есть.
   }
   return {};
 }
 
-/** Retry-After за RFC 7231 — або секунди, або HTTP-дата. Relay шле секунди. */
+/** Retry-After по RFC 7231 — либо секунды, либо HTTP-дата. Relay шлёт секунды. */
 function parseRetryAfter(raw: string | null): number | undefined {
   if (!raw) return undefined;
   const seconds = Number(raw);

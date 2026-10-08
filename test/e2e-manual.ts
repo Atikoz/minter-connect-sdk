@@ -1,20 +1,20 @@
 /**
- * РУЧНИЙ e2e-тест проти живого relay. У npm-пакет не потрапляє (rootDir=src).
+ * РУЧНОЙ e2e-тест против живого relay. В npm-пакет не попадает (rootDir=src).
  *
  *   cd ../minterWallet/minter-backend
  *   docker compose up -d && npm run migrate:up && npm run dev
  *   cd -  &&  npm run test:e2e
  *
- * Relay має бути в дев-режимі (WEBHOOK_ALLOW_PRIVATE_NETWORK=true): manifest
- * цей скрипт роздає сам з http://localhost:<MANIFEST_PORT>, а relay у проді
- * ходить лише на публічні https-адреси.
+ * Relay должен быть в dev-режиме (WEBHOOK_ALLOW_PRIVATE_NETWORK=true): manifest
+ * этот скрипт раздаёт сам с http://localhost:<MANIFEST_PORT>, а relay в проде
+ * ходит только на публичные https-адреса.
  *
- * Змінні: RELAY_URL (за замовчуванням http://localhost:3000),
- *         MANIFEST_PORT (за замовчуванням 5179),
- *         CALLBACK_URL (не обов'язково).
+ * Переменные: RELAY_URL (по умолчанию http://localhost:3000),
+ *         MANIFEST_PORT (по умолчанию 5179),
+ *         CALLBACK_URL (необязательно).
  *
- * Сценарії: щасливий шлях, відмова гаманця з кодом, відновлення сесії з
- * dexToken і відкликана сесія.
+ * Сценарии: счастливый путь, отказ кошелька с кодом, восстановление сессии с
+ * dexToken и отозванная сессия.
  */
 
 import { createServer } from 'node:http';
@@ -31,7 +31,7 @@ const CALLBACK_URL = process.env.CALLBACK_URL;
 const SIGNED_TX = 'f8a0deadbeefcafe';
 const TX = { to: `Mx${'11'.repeat(20)}`, amount: '1.5', coin: 'BIP' };
 
-/* --------------------------- manifest сайту --------------------------- */
+/* --------------------------- manifest сайта --------------------------- */
 
 const origin = `http://localhost:${MANIFEST_PORT}`;
 const manifestServer = createServer((req, res) => {
@@ -52,7 +52,7 @@ const client = new MinterConnectClient({
   ...(CALLBACK_URL ? { callbackUrl: CALLBACK_URL } : {}),
 });
 
-/** Стан симульованого гаманця для однієї сесії. */
+/** Состояние симулированного кошелька для одной сессии. */
 interface WalletSide {
   wallet: SimulatedWallet;
   sessionId: string;
@@ -74,7 +74,7 @@ async function connect(): Promise<{ session: MinterConnectSession; side: WalletS
 }
 
 async function happyPath(): Promise<void> {
-  console.log('\n=== 1. Щасливий шлях ===');
+  console.log('\n=== 1. Счастливый путь ===');
   const { session, side } = await connect();
 
   const signed = session.sendTransaction(TX, { pollIntervalMs: 300 });
@@ -86,7 +86,7 @@ async function happyPath(): Promise<void> {
   console.log('[dex/sdk] signedTxHex:', signedTxHex);
   assert(signedTxHex === SIGNED_TX, `unexpected signature value: ${signedTxHex}`);
 
-  console.log('\n=== 2. Відмова гаманця з кодом ===');
+  console.log('\n=== 2. Отказ кошелька с кодом ===');
   for (const [walletCode, sdkCode] of [
     ['user_rejected', 'signing_rejected'],
     ['signing_failed', 'wallet_signing_failed'],
@@ -99,7 +99,7 @@ async function happyPath(): Promise<void> {
     assert(err.code === sdkCode, `expected ${sdkCode}, got ${err.code}`);
   }
 
-  console.log('\n=== 3. Відновлення з serialize() ===');
+  console.log('\n=== 3. Восстановление из serialize() ===');
   const state = session.serialize();
   session.close();
   const restored = await client.restoreSession(state);
@@ -110,12 +110,12 @@ async function happyPath(): Promise<void> {
 
   const forged = await client.restoreSession({ ...state, dexToken: 'A'.repeat(43) }).catch((e: unknown) => e);
   assert(forged instanceof MinterConnectError && forged.code === 'unauthorized', `expected unauthorized, got ${String(forged)}`);
-  console.log('[dex/sdk] чужий dexToken ->', forged.code);
+  console.log('[dex/sdk] чужой dexToken ->', forged.code);
   restored.close();
 }
 
 async function revokedSession(): Promise<void> {
-  console.log('\n=== 4. Відкликана сесія ===');
+  console.log('\n=== 4. Отозванная сессия ===');
   const { session, side } = await connect();
   await revokeAsWallet(side);
 
@@ -127,14 +127,14 @@ async function revokedSession(): Promise<void> {
   session.close();
 }
 
-/* --------------------------- сторона гаманця --------------------------- */
+/* --------------------------- сторона кошелька --------------------------- */
 
 async function confirmAsWallet(sessionId: string, wallet: SimulatedWallet): Promise<WalletSide> {
   const pairing = await okJson<{ manifestUrl: string; dexPublicKeyHex: string }>(
     await fetch(`${RELAY_URL}/sessions/${sessionId}/pairing`),
     'GET /sessions/:id/pairing',
   );
-  // Гаманець сам завантажує manifest і підписує host з manifest.url.
+  // Кошелёк сам загружает manifest и подписывает host из manifest.url.
   const manifest = await okJson<{ url: string }>(await fetch(pairing.manifestUrl), 'GET manifest');
   const domain = new URL(manifest.url).host;
   const issuedAt = Date.now();
@@ -228,11 +228,11 @@ async function revokeAsWallet(side: WalletSide): Promise<void> {
   console.log('[wallet/sim] session revoked');
 }
 
-/* ------------------------------ утиліти ------------------------------- */
+/* ------------------------------ утилиты ------------------------------- */
 
 /**
- * Кожен крок симуляції перевіряє res.ok: інакше 4xx від relay проходив би
- * непоміченим, і тест зависав би на поллінгу, показуючи не ту проблему.
+ * Каждый шаг симуляции проверяет res.ok: иначе 4xx от relay проходил бы
+ * незамеченным, и тест зависал бы на поллинге, показывая не ту проблему.
  */
 async function okJson<T = unknown>(res: Response, what: string): Promise<T> {
   const text = await res.text();

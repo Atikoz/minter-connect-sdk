@@ -1,6 +1,6 @@
 /**
- * Піднімає сесію SDK до стану "connected" поверх стабу fetch, щоб тести
- * помилок і поллінгу починались із того ж місця, з якого починає інтегратор.
+ * Поднимает сессию SDK до состояния "connected" поверх стаба fetch, чтобы тесты
+ * ошибок и поллинга начинались с того же места, с которого начинает интегратор.
  */
 
 import { vi } from 'vitest';
@@ -21,14 +21,14 @@ export const RELAY_URL = 'https://relay.test';
 export interface ConnectedFixture {
   session: MinterConnectSession;
   wallet: SimulatedWallet;
-  /** AES-ключ сторони гаманця — щоб перевіряти, що SDK зашифрував читабельно. */
+  /** AES-ключ стороны кошелька — чтобы проверять, что SDK зашифровал читаемо. */
   walletAesKey: CryptoKey;
   calls: StubCall[];
 }
 
 /**
- * `handler` обробляє все, що йде ПІСЛЯ успішного handshake. Сам handshake
- * (POST /sessions + один GET зі статусом connected) стаб закриває сам.
+ * `handler` обрабатывает всё, что идёт ПОСЛЕ успешного handshake. Сам handshake
+ * (POST /sessions + один GET со статусом connected) стаб закрывает сам.
  */
 export async function connectSession(handler: StubHandler): Promise<ConnectedFixture> {
   const wallet = createSimulatedWallet();
@@ -61,10 +61,10 @@ export async function connectSession(handler: StubHandler): Promise<ConnectedFix
   return { session, wallet, walletAesKey, calls: stub.calls };
 }
 
-/** Валідні params sendTransaction. */
+/** Валидные params sendTransaction. */
 export const VALID_TX = { to: `Mx${'11'.repeat(20)}`, amount: '1.5', coin: 'BIP' } as const;
 
-/** Стандартна відповідь relay на POST /sessions/:id/requests. */
+/** Стандартный ответ relay на POST /sessions/:id/requests. */
 export function pendingRequestReply(reqId: string, ttlMs = 90_000) {
   return { json: { reqId, status: 'pending', expiresAt: new Date(Date.now() + ttlMs).toISOString() } };
 }

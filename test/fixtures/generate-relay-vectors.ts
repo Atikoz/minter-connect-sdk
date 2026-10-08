@@ -1,16 +1,16 @@
 /**
- * Генерує test/fixtures/relay-vectors.json СПРАВЖНІМ кодом бекенду.
+ * Генерирует test/fixtures/relay-vectors.json НАСТОЯЩИМ кодом бэкенда.
  *
- *   npm run fixtures:relay   # потрібен сусідній чекаут ../minterWallet/minter-backend
+ *   npm run fixtures:relay   # нужен соседний чекаут ../minterWallet/minter-backend
  *
- * Навіщо: test/relay-compat.test.ts у CI не бачить бекенду поруч, і без
- * фіксованих векторів розбіжність формату там просто не ловилась би. Вектори
- * — це знімок контракту: ключі, рядки підпису, підписи, вердикти
- * verifyHandshake і шифротексти, зроблені примітивами relay. SDK мусить
- * відтворити їх байт у байт.
+ * Зачем: test/relay-compat.test.ts в CI не видит бэкенда рядом, и без
+ * фиксированных векторов расхождение формата там просто не ловилось бы. Векторы
+ * — это снимок контракта: ключи, строки подписи, подписи, вердикты
+ * verifyHandshake и шифротексты, сделанные примитивами relay. SDK обязан
+ * воспроизвести их байт в байт.
  *
- * Перегенеровувати лише разом зі зміною контракту на бекенді. Якщо після
- * перегенерації тести SDK червоні — SDK розійшовся з бекендом, а не вектори.
+ * Перегенерировать только вместе с изменением контракта на бэкенде. Если после
+ * перегенерации тесты SDK красные — SDK разошёлся с бэкендом, а не векторы.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -34,7 +34,7 @@ const handshake = (await import(shared('handshake.ts'))) as {
   verifyHandshake(claim: Record<string, unknown>, expect: Record<string, unknown>): string | null;
 };
 
-/** Детерміновані ключі: секрет = sha256(мітка). Вектор має бути відтворюваним. */
+/** Детерминированные ключи: секрет = sha256(метка). Вектор должен быть воспроизводимым. */
 function keyPair(label: string) {
   const secretKey = sha256(new TextEncoder().encode(`minter-connect-sdk fixture: ${label}`));
   return { secretKeyHex: secp.etc.bytesToHex(secretKey), publicKeyHex: secp.etc.bytesToHex(secp.getPublicKey(secretKey)) };
@@ -51,7 +51,7 @@ const sessionId = '3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42';
 const domain = 'dex.example';
 const issuedAt = 1_759_800_000_000;
 
-// Гаманець надсилає ключ у будь-якому регістрі; рядок підпису — завжди нижній.
+// Кошелёк отправляет ключ в любом регистре; строка подписи — всегда нижний.
 const message = handshake.canonicalMessage.handshake(sessionId, walletEcdh.publicKeyHex.toUpperCase(), 'Dex.Example', issuedAt);
 const signature = crypto.signMessage(sk(identity.secretKeyHex), message);
 
@@ -66,7 +66,7 @@ const claim = {
 };
 const maxAgeMs = 10 * 60_000;
 
-/** Кожен кейс: що змінено в claim/expect і що на це відповів бекенд. */
+/** Каждый кейс: что изменено в claim/expect и что на это ответил бэкенд. */
 const cases: Array<{ name: string; claim: Record<string, unknown>; expect: Record<string, unknown> }> = [
   { name: 'valid', claim: {}, expect: {} },
   { name: 'valid: domain case and whitespace', claim: { domain: ' DEX.Example ' }, expect: { expectedDomain: 'Dex.EXAMPLE' } },
@@ -91,7 +91,7 @@ const verifyCases = cases.map(({ name, claim: patch, expect: expectPatch }) => {
   return { name, claim: c, expect: e, result: handshake.verifyHandshake(c, e) };
 });
 
-// E2E: шифротексти робить бекенд на стороні гаманця, SDK має їх прочитати.
+// E2E: шифротексты делает бэкенд на стороне кошелька, SDK должен их прочитать.
 const walletKey = await crypto.deriveSharedAesKey(sk(walletEcdh.secretKeyHex), dexEcdh.publicKeyHex);
 const request = { v: 1, method: 'sendTransaction', params: { to: walletAddress, amount: '1.5', coin: 'BIP' } };
 const results = {

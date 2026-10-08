@@ -1,16 +1,16 @@
 /**
- * Вміст запитів і результатів, версія 1 (docs/API.md бекенду → «Вміст
- * запитів і результатів»). Relay цих об'єктів не бачить і не валідує — це
- * контракт між сайтом і гаманцем, тому SDK перевіряє params ТИМИ САМИМИ
- * правилами, що й гаманець: помилка виклику стає `invalid_request` одразу, а
- * не `wallet_bad_request` через хвилину очікування і пуш юзеру в Telegram.
+ * Содержимое запросов и результатов, версия 1 (docs/API.md бэкенда → «Вміст
+ * запитів і результатів»). Relay этих объектов не видит и не валидирует — это
+ * контракт между сайтом и кошельком, поэтому SDK проверяет params ТЕМИ ЖЕ
+ * правилами, что и кошелёк: ошибка вызова становится `invalid_request` сразу, а
+ * не `wallet_bad_request` через минуту ожидания и пуш юзеру в Telegram.
  */
 
 import { MinterConnectError, type MinterConnectErrorCode, type SendTransactionParams } from './types.js';
 
 export const REQUEST_FORMAT_VERSION = 1;
 
-/** Рівно те, що шифрується в encryptedPayload. */
+/** Ровно то, что шифруется в encryptedPayload. */
 export interface SendTransactionRequest {
   v: typeof REQUEST_FORMAT_VERSION;
   method: 'sendTransaction';
@@ -23,8 +23,8 @@ const COIN_RE = /^[A-Z0-9-]{3,10}$/;
 const PARAM_KEYS = ['to', 'amount', 'coin'] as const;
 
 /**
- * Будує запит і відкидає все, що гаманець відхилив би з `bad_request`,
- * включно із зайвими полями: гаманець їх не ігнорує, а відмовляє.
+ * Строит запрос и отбрасывает всё, что кошелёк отклонил бы с `bad_request`,
+ * включая лишние поля: кошелёк их не игнорирует, а отказывает.
  */
 export function buildSendTransactionRequest(params: SendTransactionParams): SendTransactionRequest {
   if (!params || typeof params !== 'object' || Array.isArray(params)) {
@@ -49,7 +49,7 @@ export function buildSendTransactionRequest(params: SendTransactionParams): Send
         `without sign or exponent; got ${describe(amount)}`,
     );
   }
-  // Формат уже гарантує лише цифри й одну крапку, тож "> 0" = є ненульова цифра.
+  // Формат уже гарантирует только цифры и одну точку, поэтому "> 0" = есть ненулевая цифра.
   if (!/[1-9]/.test(amount)) throw invalid('params.amount must be greater than zero');
   if (typeof coin !== 'string' || !COIN_RE.test(coin)) {
     throw invalid(
@@ -57,12 +57,12 @@ export function buildSendTransactionRequest(params: SendTransactionParams): Send
     );
   }
 
-  // Новий об'єкт, а не params: у шифротекст не має потрапити нічого, крім
-  // цих трьох полів, навіть якщо об'єкт інтегратора — інстанс класу з геттерами.
+  // Новый объект, а не params: в шифротекст не должно попасть ничего, кроме
+  // этих трёх полей, даже если объект интегратора — инстанс класса с геттерами.
   return { v: REQUEST_FORMAT_VERSION, method: 'sendTransaction', params: { to, amount, coin } };
 }
 
-/** `error.code` гаманця у `rejected` -> код SDK. */
+/** `error.code` кошелька в `rejected` -> код SDK. */
 const WALLET_ERROR_CODES: Record<string, MinterConnectErrorCode> = {
   user_rejected: 'signing_rejected',
   bad_request: 'wallet_bad_request',
@@ -70,9 +70,9 @@ const WALLET_ERROR_CODES: Record<string, MinterConnectErrorCode> = {
 };
 
 /**
- * Помилка для `status: rejected`. `result` — розшифрований encryptedResult,
- * або `undefined`, якщо його немає чи він не розшифровується: за API.md це
- * трактується як `bad_request` (у гаманця немає ключа цієї сесії).
+ * Ошибка для `status: rejected`. `result` — расшифрованный encryptedResult,
+ * или `undefined`, если его нет или он не расшифровывается: по API.md это
+ * трактуется как `bad_request` (у кошелька нет ключа этой сессии).
  */
 export function walletRejectionError(reqId: string, result: unknown): MinterConnectError {
   const error = result && typeof result === 'object' ? (result as { error?: unknown }).error : undefined;
@@ -99,7 +99,7 @@ export function walletRejectionError(reqId: string, result: unknown): MinterConn
       details,
     );
   }
-  // bad_request і будь-який невідомий код: гаманець вважає запит некоректним.
+  // bad_request и любой неизвестный код: кошелёк считает запрос некорректным.
   return new MinterConnectError(
     'wallet_bad_request',
     `Wallet rejected request ${reqId} as malformed` +

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="uk">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -34,36 +34,36 @@
   <h1>Minter Connect demo</h1>
 
   <section id="connect">
-    <h2>1. Підключення</h2>
+    <h2>1. Подключение</h2>
     <div class="row">
-      <button id="btn-connect">Підключити гаманець</button>
-      <button id="btn-retry" class="secondary" hidden>Спробувати ще раз</button>
+      <button id="btn-connect">Подключить кошелёк</button>
+      <button id="btn-retry" class="secondary" hidden>Попробовать ещё раз</button>
     </div>
     <div id="pairing" hidden>
       <div id="qr"></div>
-      <p><a id="deeplink" target="_blank" rel="noopener">Відкрити гаманець</a> — або відскануйте QR телефоном.</p>
-      <p class="mono" id="pairing-status">Чекаємо підтвердження в гаманці…</p>
+      <p><a id="deeplink" target="_blank" rel="noopener">Открыть кошелёк</a> — или отсканируйте QR телефоном.</p>
+      <p class="mono" id="pairing-status">Ждём подтверждения в кошельке…</p>
     </div>
   </section>
 
   <section id="connected" hidden>
-    <h2>2. Підключена адреса</h2>
+    <h2>2. Подключённый адрес</h2>
     <p class="mono" id="address"></p>
-    <p class="warn">Сесію підтверджує той, хто першим відкрив посилання. Перевірте, що це ВАША адреса, перш ніж щось підписувати.</p>
+    <p class="warn">Сессию подтверждает тот, кто первым открыл ссылку. Проверьте, что это ВАШ адрес, прежде чем что-то подписывать.</p>
   </section>
 
   <section id="tx" hidden>
-    <h2>3. Переказ</h2>
+    <h2>3. Перевод</h2>
     <form id="tx-form">
       <label>Кому (Mx…) <input name="to" required pattern="Mx[0-9a-fA-F]{40}" placeholder="Mx…" /></label>
-      <label>Сума, в монетах <input name="amount" required value="0.01" /></label>
+      <label>Сумма, в монетах <input name="amount" required value="0.01" /></label>
       <label>Монета <input name="coin" required value="BIP" /></label>
-      <button type="submit" id="btn-sign">Підписати в гаманці</button>
+      <button type="submit" id="btn-sign">Подписать в кошельке</button>
     </form>
     <p class="mono" id="sign-status"></p>
     <div id="signed" hidden>
       <p>signedTxHex: <code id="signed-hex"></code></p>
-      <button id="btn-broadcast">Відправити в мережу</button>
+      <button id="btn-broadcast">Отправить в сеть</button>
       <p class="mono" id="broadcast-status"></p>
     </div>
   </section>
@@ -99,16 +99,16 @@
       new QRCode($('qr'), { text: s.deepLink, width: 200, height: 200 });
       $('pairing').hidden = false;
       $('btn-retry').hidden = false;
-      status($('pairing-status'), 'Чекаємо підтвердження в гаманці…');
+      status($('pairing-status'), 'Ждём подтверждения в кошельке…');
 
       const mine = sessionId;
       const c = await api('/api/connection?sessionId=' + encodeURIComponent(mine));
-      if (mine !== sessionId) return; // юзер уже натиснув «Спробувати ще раз»
+      if (mine !== sessionId) return; // юзер уже нажал «Попробовать ещё раз»
       $('pairing').hidden = true;
       $('btn-retry').hidden = true;
       $('connected').hidden = false;
       $('tx').hidden = false;
-      $('address').textContent = c.walletAddress + (c.handshakeVerified ? '  ✓ доказ перевірено' : '');
+      $('address').textContent = c.walletAddress + (c.handshakeVerified ? '  ✓ доказательство проверено' : '');
     } catch (e) {
       status($('pairing-status'), (e.error || 'error') + ': ' + e.message, 'err');
     } finally {
@@ -117,7 +117,7 @@
   }
 
   $('btn-connect').onclick = connect;
-  // Окремої «відмови» немає: нова спроба = нова сесія, стара сама протухне.
+  // Отдельного «отказа» нет: новая попытка = новая сессия, старая сама протухнет.
   $('btn-retry').onclick = connect;
 
   $('tx-form').onsubmit = async (ev) => {
@@ -125,7 +125,7 @@
     const form = new FormData(ev.target);
     $('btn-sign').disabled = true;
     $('signed').hidden = true;
-    status($('sign-status'), 'Запит надіслано — підтвердіть у гаманці…');
+    status($('sign-status'), 'Запрос отправлен — подтвердите в кошельке…');
     try {
       const r = await api('/api/sign', {
         sessionId, to: form.get('to'), amount: form.get('amount'), coin: form.get('coin'),
@@ -133,9 +133,9 @@
       signedTxHex = r.signedTxHex;
       $('signed-hex').textContent = signedTxHex;
       $('signed').hidden = false;
-      status($('sign-status'), 'Підписано.', 'ok');
+      status($('sign-status'), 'Подписано.', 'ok');
     } catch (e) {
-      const extra = e.walletErrorMessage ? ' (гаманець: ' + e.walletErrorMessage + ')' : '';
+      const extra = e.walletErrorMessage ? ' (кошелёк: ' + e.walletErrorMessage + ')' : '';
       status($('sign-status'), (e.error || 'error') + ': ' + e.message + extra, 'err');
     } finally {
       $('btn-sign').disabled = false;

@@ -6,36 +6,36 @@ import { MinterConnectError, type MinterConnectConfig, type SerializedSession } 
 
 export interface CreateSessionOptions {
   /**
-   * Вебхук саме для цієї сесії; перекриває callbackUrl з конфігу клієнта.
-   * Має бути https і не вести у приватну мережу — інакше relay відповість
-   * 400 `invalid_callback_url` (SDK кине `invalid_request` із причиною).
+   * Вебхук именно для этой сессии; перекрывает callbackUrl из конфига клиента.
+   * Должен быть https и не вести в приватную сеть — иначе relay ответит
+   * 400 `invalid_callback_url` (SDK бросит `invalid_request` с причиной).
    */
   callbackUrl?: string;
-  /** X-Request-Id для наскрізного трасування у логах relay. */
+  /** X-Request-Id для сквозной трассировки в логах relay. */
   requestId?: string;
 }
 
 /**
- * Точка входу в SDK. Один інстанс на весь застосунок DEX — тримає конфіг
- * (relayUrl/manifestUrl/walletAppLink), а кожен виклик createSession()
- * дає окрему MinterConnectSession для одного конкретного юзера/гаманця.
+ * Точка входа в SDK. Один инстанс на всё приложение DEX — держит конфиг
+ * (relayUrl/manifestUrl/walletAppLink), а каждый вызов createSession()
+ * даёт отдельную MinterConnectSession для одного конкретного юзера/кошелька.
  */
 export class MinterConnectClient {
   private readonly relayUrl: string;
   private readonly walletAppLink: string;
-  /** Власний домен сайту, з яким звіряється підпис handshake. */
+  /** Собственный домен сайта, с которым сверяется подпись handshake. */
   readonly domain: string;
 
   constructor(private config: MinterConnectConfig) {
-    // Кінцевий слеш у relayUrl дав би '//sessions'. Fastify зазвичай це
-    // переживає, а проксі перед ним — не завжди.
+    // Конечный слеш в relayUrl дал бы '//sessions'. Fastify обычно это
+    // переживает, а прокси перед ним — не всегда.
     this.relayUrl = config.relayUrl.replace(/\/+$/, '');
     this.walletAppLink = parseWalletAppLink(config.walletAppLink);
     const manifestHost = parseManifestHost(config.manifestUrl);
 
-    // Гаманець підписує host із manifest.url, а relay вимагає, щоб він
-    // дорівнював host manifestUrl. Тож інший domain не пройде НІКОЛИ —
-    // краще сказати про це тут, ніж handshake_invalid після сканування QR.
+    // Кошелёк подписывает host из manifest.url, а relay требует, чтобы он
+    // равнялся host manifestUrl. Значит, другой domain не пройдёт НИКОГДА —
+    // лучше сказать об этом здесь, чем handshake_invalid после сканирования QR.
     this.domain = normalizeDomain(config.domain ?? manifestHost);
     if (this.domain !== manifestHost) {
       throw new MinterConnectError(
@@ -61,9 +61,9 @@ export class MinterConnectClient {
         body: {
           dexPublicKeyHex: ephemeral.publicKeyHex,
           manifestUrl: this.config.manifestUrl,
-          // Поле додається ТІЛЬКИ якщо задане: у relay additionalProperties:
-          // false і removeAdditional вимкнено, тож `callbackUrl: undefined`
-          // після JSON.stringify зникне, а от порожній рядок дав би 400.
+          // Поле добавляется ТОЛЬКО если задано: в relay additionalProperties:
+          // false и removeAdditional выключен, поэтому `callbackUrl: undefined`
+          // после JSON.stringify исчезнет, а вот пустая строка дала бы 400.
           ...(callbackUrl ? { callbackUrl } : {}),
         },
         timeoutMs: this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
@@ -72,7 +72,7 @@ export class MinterConnectClient {
     );
 
     if (typeof dexToken !== 'string' || !DEX_TOKEN_RE.test(dexToken)) {
-      // Relay без dexToken — старий формат: жоден наступний запит не пройде.
+      // Relay без dexToken — старый формат: ни один следующий запрос не пройдёт.
       throw new MinterConnectError(
         'relay_error',
         'Relay did not return a dexToken for the new session. It is probably older than this SDK (2.x needs ' +
@@ -84,21 +84,21 @@ export class MinterConnectClient {
   }
 
   /**
-   * Відновлює сесію зі стану, збереженого через session.serialize().
+   * Восстанавливает сессию из состояния, сохранённого через session.serialize().
    *
-   * Relay тримає підтверджену сесію 7 днів і в GET /sessions/:id віддає все
-   * потрібне, включно з доказом handshake, — тож відновлення не довіряє
-   * сховищу: адреса й ключ каналу беруться з relay і доказ перевіряється
-   * заново, як при першому підключенні.
+   * Relay держит подтверждённую сессию 7 дней и в GET /sessions/:id отдаёт всё
+   * нужное, включая доказательство handshake, — поэтому восстановление не доверяет
+   * хранилищу: адрес и ключ канала берутся из relay, и доказательство проверяется
+   * заново, как при первом подключении.
    *
-   * Кидає `session_revoked` / `session_expired` / `session_not_found`, якщо
-   * сесії більше немає, — тобто саме ті коди, на які інтегратор уже реагує
+   * Бросает `session_revoked` / `session_expired` / `session_not_found`, если
+   * сессии больше нет, — то есть именно те коды, на которые интегратор уже реагирует
    * через err.requiresReconnect.
    *
-   * Повернена сесія готова підписувати, ЯКЩО гаманець встиг підтвердити
-   * підключення до перезапуску. Інакше вона лишається у стані pending
-   * (`isConnected === false`) — тоді показуйте deepLink і викликайте
-   * waitForConnection() як завжди.
+   * Возвращённая сессия готова подписывать, ЕСЛИ кошелёк успел подтвердить
+   * подключение до перезапуска. Иначе она остаётся в состоянии pending
+   * (`isConnected === false`) — тогда показывайте deepLink и вызывайте
+   * waitForConnection() как обычно.
    */
   async restoreSession(state: SerializedSession): Promise<MinterConnectSession> {
     assertSerializedSession(state);
@@ -112,8 +112,8 @@ export class MinterConnectClient {
     try {
       await session.resume();
     } catch (err) {
-      // Мертву сесію не лишаємо з живим циклом поллінгу: інтегратор у
-      // catch-гілці зазвичай одразу створює нову і про цю вже не згадає.
+      // Мёртвую сессию не оставляем с живым циклом поллинга: интегратор в
+      // catch-ветке обычно сразу создаёт новую и об этой уже не вспомнит.
       session.close();
       throw err;
     }
@@ -124,7 +124,7 @@ export class MinterConnectClient {
     return new MinterConnectSession({
       relayUrl: this.relayUrl,
       sessionId,
-      // docs/API.md → «Посилання на підключення». dexToken сюди не потрапляє.
+      // docs/API.md → «Посилання на підключення». dexToken сюда не попадает.
       deepLink: `${this.walletAppLink}?startapp=connect_${sessionId}`,
       ephemeralSecretKey,
       dexToken,
@@ -139,10 +139,10 @@ export class MinterConnectClient {
 }
 
 /**
- * Стан приходить зі сховища, а не з коду, тож він може бути будь-чим:
- * обрізаний JSON, запис від старішої версії формату, чужий об'єкт. Перевірка
- * форми тут дає `invalid_request` із зрозумілим текстом замість падіння
- * десь усередині крипти.
+ * Состояние приходит из хранилища, а не из кода, поэтому оно может быть чем угодно:
+ * обрезанный JSON, запись от более старой версии формата, чужой объект. Проверка
+ * формы здесь даёт `invalid_request` с понятным текстом вместо падения
+ * где-то внутри крипты.
  */
 function assertSerializedSession(state: SerializedSession): void {
   const { v, sessionId, ephemeralSecretKeyHex, dexToken } = (state ?? {}) as unknown as Partial<Record<string, unknown>>;
@@ -167,7 +167,7 @@ function assertSerializedSession(state: SerializedSession): void {
   }
 }
 
-/** Формат, який relay приймає в `Authorization: Bearer`. */
+/** Формат, который relay принимает в `Authorization: Bearer`. */
 const DEX_TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
 function parseManifestHost(manifestUrl: string): string {
@@ -179,17 +179,17 @@ function parseManifestHost(manifestUrl: string): string {
       cause,
     });
   }
-  // http — лише для локальної розробки: relay у дев-режимі
-  // (WEBHOOK_ALLOW_PRIVATE_NETWORK=true) приймає http://localhost, а в
-  // проді відхиляє все, крім https.
+  // http — только для локальной разработки: relay в dev-режиме
+  // (WEBHOOK_ALLOW_PRIVATE_NETWORK=true) принимает http://localhost, а в
+  // проде отклоняет всё, кроме https.
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) {
     throw new MinterConnectError(
       'invalid_request',
       'config.manifestUrl must be https (http is accepted only for localhost during development)',
     );
   }
-  // URL.host уже в нижньому регістрі й без стандартного порту — рівно те,
-  // що гаманець підписує як domain.
+  // URL.host уже в нижнем регистре и без стандартного порта — ровно то,
+  // что кошелёк подписывает как domain.
   return url.host;
 }
 

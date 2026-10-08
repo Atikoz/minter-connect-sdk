@@ -1,20 +1,20 @@
 /**
- * Мінімальне демо всього потоку з живим гаманцем:
- *   підключення → адреса → форма to/amount/coin → підпис → відправка в мережу.
+ * Минимальное демо всего потока с живым кошельком:
+ *   подключение → адрес → форма to/amount/coin → подпись → отправка в сеть.
  *
- * SDK тут працює на СЕРВЕРІ: dexToken і ephemeral-ключ сесії нікуди не
- * виходять, браузер бачить лише sessionId (він не секрет) і deepLink.
+ * SDK здесь работает на СЕРВЕРЕ: dexToken и ephemeral-ключ сессии никуда не
+ * уходят, браузер видит только sessionId (он не секрет) и deepLink.
  *
- *   PUBLIC_URL=https://<ваш-тунель>  RELAY_URL=https://<relay гаманця>  \
+ *   PUBLIC_URL=https://<ваш-туннель>  RELAY_URL=https://<relay кошелька>  \
  *   WALLET_APP_LINK=https://t.me/<Bot>/app  MINTER_NODE_URL=https://<node>/v2  npm run demo
  *
- * PUBLIC_URL — публічна https-адреса цього сервера (cloudflared/ngrok):
- * relay і гаманець самі завантажують з неї manifest. Для чисто локального
- * прогону з дев-relay (WEBHOOK_ALLOW_PRIVATE_NETWORK=true) підійде і
- * http://localhost:<PORT>, але справжній гаманець у Telegram до localhost не
- * дотягнеться.
+ * PUBLIC_URL — публичный https-адрес этого сервера (cloudflared/ngrok):
+ * relay и кошелёк сами загружают с него manifest. Для чисто локального
+ * прогона с dev-relay (WEBHOOK_ALLOW_PRIVATE_NETWORK=true) подойдёт и
+ * http://localhost:<PORT>, но настоящий кошелёк в Telegram до localhost не
+ * дотянется.
  *
- * Не для продакшну: сесії в пам'яті, без авторизації юзерів сайту.
+ * Не для продакшена: сессии в памяти, без авторизации юзеров сайта.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -25,7 +25,7 @@ const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/+$/, '');
 const RELAY_URL = process.env.RELAY_URL ?? 'http://localhost:3000';
 const WALLET_APP_LINK = process.env.WALLET_APP_LINK ?? 'https://t.me/MinterWalletBot/app';
-/** Minter Node API v2 (…/v2), наприклад той, яким користується гаманець. Потрібен лише для відправки. */
+/** Minter Node API v2 (…/v2), например тот, которым пользуется кошелёк. Нужен только для отправки. */
 const MINTER_NODE_URL = process.env.MINTER_NODE_URL?.replace(/\/+$/, '');
 
 const client = new MinterConnectClient({
@@ -38,7 +38,7 @@ const sessions = new Map<string, MinterConnectSession>();
 const page = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 
 const routes: Record<string, (req: IncomingMessage, body: Record<string, unknown>, url: URL) => Promise<unknown>> = {
-  /** Manifest: той самий host, https, ACAO * (гаманець вантажить його з браузера). */
+  /** Manifest: тот же host, https, ACAO * (кошелёк загружает его из браузера). */
   'GET /minter-connect-manifest.json': async () => ({
     url: PUBLIC_URL,
     name: 'Minter Connect demo',
@@ -51,7 +51,7 @@ const routes: Record<string, (req: IncomingMessage, body: Record<string, unknown
     return { sessionId: session.sessionId, deepLink: session.deepLink, expiresAt: session.expiresAt };
   },
 
-  /** Довгий запит: відповідає, коли гаманець підтвердив (і доказ перевірено). */
+  /** Долгий запрос: отвечает, когда кошелёк подтвердил (и доказательство проверено). */
   'GET /api/connection': async (_req, _body, url) => {
     const session = sessionFrom(url.searchParams.get('sessionId'));
     return session.waitForConnection();
@@ -67,7 +67,7 @@ const routes: Record<string, (req: IncomingMessage, body: Record<string, unknown
     return { signedTxHex };
   },
 
-  /** Відправку в мережу робить сайт — relay і гаманець транзакцію не транслюють. */
+  /** Отправку в сеть делает сайт — relay и кошелёк транзакцию не транслируют. */
   'POST /api/broadcast': async (_req, body) => broadcast(String(body.signedTxHex ?? '')),
 };
 
@@ -121,7 +121,7 @@ const server = createServer(async (req, res) => {
 function send(res: ServerResponse, status: number, body: unknown, type = 'application/json'): void {
   res.writeHead(status, {
     'content-type': type,
-    // Потрібно для manifest: гаманець у Telegram читає його з браузера.
+    // Нужно для manifest: кошелёк в Telegram читает его из браузера.
     'access-control-allow-origin': '*',
   });
   res.end(typeof body === 'string' ? body : JSON.stringify(body));

@@ -1,9 +1,9 @@
 /**
- * Мапінг відповідей relay у коди SDK.
+ * Маппинг ответов relay в коды SDK.
  *
- * Це найважливіший тест для DX: до нього будь-який не-2xx був network_error,
- * і DEX однаково ретраїв і відкликану сесію (410), і власний невалідний
- * запит (400), і впирання в ліміт (429).
+ * Это самый важный тест для DX: до него любой не-2xx был network_error,
+ * и DEX одинаково ретраил и отозванную сессию (410), и собственный невалидный
+ * запрос (400), и упирание в лимит (429).
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -27,7 +27,7 @@ async function codeOf(reply: StubReply): Promise<MinterConnectError> {
   return err as MinterConnectError;
 }
 
-describe('HTTP-статуси relay -> code SDK', () => {
+describe('HTTP-статусы relay -> code SDK', () => {
   const cases: Array<[string, StubReply, MinterConnectErrorCode]> = [
     ['410 session_revoked', { status: 410, json: { error: 'session_revoked' } }, 'session_revoked'],
     ['410 session_expired', { status: 410, json: { error: 'session_expired' } }, 'session_expired'],
@@ -47,14 +47,14 @@ describe('HTTP-статуси relay -> code SDK', () => {
     ['429 session_rate_limited', { status: 429, json: { error: 'session_rate_limited' } }, 'rate_limited'],
     ['401 missing_dex_token', { status: 401, json: { error: 'missing_dex_token' } }, 'unauthorized'],
     ['403 invalid_dex_token', { status: 403, json: { error: 'invalid_dex_token' } }, 'unauthorized'],
-    ['401 без тіла', { status: 401, text: '' }, 'unauthorized'],
+    ['401 без тела', { status: 401, text: '' }, 'unauthorized'],
     ['422 invalid_manifest_url', { status: 422, json: { error: 'invalid_manifest_url' } }, 'invalid_manifest'],
     ['422 manifest_unreachable', { status: 422, json: { error: 'manifest_unreachable' } }, 'invalid_manifest'],
     ['422 manifest_invalid', { status: 422, json: { error: 'manifest_invalid' } }, 'invalid_manifest'],
     ['422 manifest_domain_mismatch', { status: 422, json: { error: 'manifest_domain_mismatch' } }, 'invalid_manifest'],
-    ['422 невідомий', { status: 422, json: { error: 'whatever' } }, 'invalid_manifest'],
+    ['422 неизвестный', { status: 422, json: { error: 'whatever' } }, 'invalid_manifest'],
     ['500', { status: 500, json: { error: 'internal' } }, 'relay_error'],
-    ['502 з HTML від проксі', { status: 502, text: '<html>bad gateway</html>' }, 'relay_error'],
+    ['502 с HTML от прокси', { status: 502, text: '<html>bad gateway</html>' }, 'relay_error'],
   ];
 
   for (const [name, reply, expected] of cases) {
@@ -66,13 +66,13 @@ describe('HTTP-статуси relay -> code SDK', () => {
     });
   }
 
-  it('429 несе retryAfterMs із заголовка Retry-After', async () => {
+  it('429 несёт retryAfterMs из заголовка Retry-After', async () => {
     const err = await codeOf({ status: 429, json: { error: 'rate_limited' }, headers: { 'retry-after': '7' } });
     expect(err.retryAfterMs).toBe(7000);
     expect(err.isRetryable).toBe(true);
   });
 
-  it('ліміти сесії без Retry-After отримують дефолтний retryAfterMs', async () => {
+  it('лимиты сессии без Retry-After получают дефолтный retryAfterMs', async () => {
     for (const error of ['too_many_pending_requests', 'session_rate_limited']) {
       const err = await codeOf({ status: 429, json: { error } });
       expect(err.retryAfterMs).toBe(DEFAULT_RETRY_AFTER_MS);
@@ -81,7 +81,7 @@ describe('HTTP-статуси relay -> code SDK', () => {
     }
   });
 
-  it('unauthorized і invalid_manifest НЕ retryable (раніше падали в relay_error)', async () => {
+  it('unauthorized и invalid_manifest НЕ retryable (раньше падали в relay_error)', async () => {
     const unauthorized = await codeOf({ status: 403, json: { error: 'invalid_dex_token' } });
     expect(unauthorized.isRetryable).toBe(false);
     expect(unauthorized.requiresReconnect).toBe(true);
@@ -92,18 +92,18 @@ describe('HTTP-статуси relay -> code SDK', () => {
     expect(manifest.relayError).toBe('manifest_domain_mismatch');
   });
 
-  it('relayError і message relay доїжджають до інтегратора', async () => {
+  it('relayError и message relay доезжают до интегратора', async () => {
     const err = await codeOf({ status: 400, json: { error: 'invalid_callback_url', message: 'private_network' } });
     expect(err.relayError).toBe('invalid_callback_url');
     expect(err.message).toContain('private_network');
   });
 
-  it('термінальні коди позначені requiresReconnect', async () => {
+  it('терминальные коды помечены requiresReconnect', async () => {
     expect((await codeOf({ status: 410, json: { error: 'session_revoked' } })).requiresReconnect).toBe(true);
     expect((await codeOf({ status: 500, json: {} })).requiresReconnect).toBe(false);
   });
 
-  it('справжній мережевий збій лишається network_error', async () => {
+  it('настоящий сетевой сбой остаётся network_error', async () => {
     vi.stubGlobal('fetch', () => Promise.reject(new TypeError('fetch failed')));
     const err = (await relayFetch(`${RELAY_URL}/sessions/x`).catch((e: unknown) => e)) as MinterConnectError;
     expect(err.code).toBe('network_error');
@@ -111,8 +111,8 @@ describe('HTTP-статуси relay -> code SDK', () => {
   });
 });
 
-describe('помилки в реальних викликах SDK', () => {
-  it('createSession на 429 падає одразу (одноразовий виклик не ретраїться мовчки)', async () => {
+describe('ошибки в реальных вызовах SDK', () => {
+  it('createSession на 429 падает сразу (одноразовый вызов не ретраится молча)', async () => {
     const stub = createFetchStub(() => ({ status: 429, json: { error: 'rate_limited' }, headers: { 'retry-after': '30' } }));
     vi.stubGlobal('fetch', stub.fetch);
 
@@ -121,7 +121,7 @@ describe('помилки в реальних викликах SDK', () => {
 
     expect(err.code).toBe('rate_limited');
     expect(err.retryAfterMs).toBe(30_000);
-    expect(stub.calls).toHaveLength(1); // жодного прихованого ретраю
+    expect(stub.calls).toHaveLength(1); // ни одного скрытого ретрая
   });
 
   it('createSession на 422 manifest_* -> invalid_manifest', async () => {
@@ -136,7 +136,7 @@ describe('помилки в реальних викликах SDK', () => {
     expect((stub.calls[0]!.body as Record<string, unknown>).manifestUrl).toBe(TEST_CLIENT_CONFIG.manifestUrl);
   });
 
-  it('sendTransaction() у відкликану сесію дає session_revoked, а не network_error', async () => {
+  it('sendTransaction() в отозванную сессию даёт session_revoked, а не network_error', async () => {
     const { session } = await connectSession(() => ({ status: 410, json: { error: 'session_revoked' } }));
 
     const err = (await session
@@ -147,7 +147,7 @@ describe('помилки в реальних викликах SDK', () => {
     expect(err.requiresReconnect).toBe(true);
   });
 
-  it('waitForSignature на 404 request_not_found не крутить поллінг до таймауту', async () => {
+  it('waitForSignature на 404 request_not_found не крутит поллинг до таймаута', async () => {
     const { session } = await connectSession((call) =>
       call.method === 'POST' ? pendingRequestReply(FAKE_REQ_ID) : { status: 404, json: { error: 'request_not_found' } },
     );

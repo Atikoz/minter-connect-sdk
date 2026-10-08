@@ -1,23 +1,23 @@
 /**
- * Незалежна перевірка handshake на боці DEX.
+ * Независимая проверка handshake на стороне DEX.
  *
- * Навіщо: без неї SDK бере walletAddress і walletPublicKeyHex (ECDH-ключ
- * каналу) на слово relay. Тобто E2E-шифрування не дає нічого проти самого
- * relay — а це головна причина будувати таку схему: хто контролює relay або
- * TLS-термінуючий проксі, підставляє свій ECDH-ключ, читає всі "зашифровані"
- * транзакції, і жодна перевірка адреси цього не помічає.
+ * Зачем: без неё SDK берёт walletAddress и walletPublicKeyHex (ECDH-ключ
+ * канала) на слово relay. То есть E2E-шифрование не даёт ничего против самого
+ * relay — а это главная причина строить такую схему: кто контролирует relay или
+ * TLS-терминирующий прокси, подставляет свой ECDH-ключ, читает все "зашифрованные"
+ * транзакции, и ни одна проверка адреса этого не замечает.
  *
- * Relay зберігає доказ (identity-ключ + підпис гаманця) і віддає його в
- * GET /sessions/:sessionId саме для цієї перевірки. Перевіряємо:
- *   1) підписаний домен — НАШ (з конфігу, не з відповіді relay);
- *   2) підпис не протух і не "з майбутнього";
- *   3) identityPublicKeyHex розгортається РІВНО в заявлену walletAddress;
- *   4) підпис валідний для канонічного повідомлення, у яке входять
- *      ecdhPublicKeyHex і домен — тож підмінений ключ каналу робить підпис
- *      невалідним.
+ * Relay хранит доказательство (identity-ключ + подпись кошелька) и отдаёт его в
+ * GET /sessions/:sessionId именно для этой проверки. Проверяем:
+ *   1) подписанный домен — НАШ (из конфига, не из ответа relay);
+ *   2) подпись не протухла и не "из будущего";
+ *   3) identityPublicKeyHex разворачивается РОВНО в заявленный walletAddress;
+ *   4) подпись валидна для канонического сообщения, в которое входят
+ *      ecdhPublicKeyHex и домен — поэтому подменённый ключ канала делает подпись
+ *      невалидной.
  *
- * Логіка — копія verifyHandshake із minter-backend/src/shared/handshake.ts.
- * Розходження ловить test/relay-compat.test.ts (фіксовані вектори з бекенду).
+ * Логика — копия verifyHandshake из minter-backend/src/shared/handshake.ts.
+ * Расхождение ловит test/relay-compat.test.ts (фиксированные векторы из бэкенда).
  */
 
 import * as secp from '@noble/secp256k1';
@@ -28,22 +28,22 @@ export interface HandshakeClaim {
   sessionId: string;
   walletAddress: string;
   identityPublicKeyHex: string;
-  /** ECDH-ключ каналу — той самий walletPublicKeyHex, який віддав relay. */
+  /** ECDH-ключ канала — тот же walletPublicKeyHex, который отдал relay. */
   ecdhPublicKeyHex: string;
-  /** Домен, який гаманець ПІДПИСАВ (host з manifest.url). З відповіді relay — тож лише заявка. */
+  /** Домен, который кошелёк ПОДПИСАЛ (host из manifest.url). Из ответа relay — поэтому лишь заявка. */
   domain: string;
-  /** Unix-час підпису в мілісекундах. */
+  /** Unix-время подписи в миллисекундах. */
   issuedAt: number;
   signature: string;
 }
 
 export interface HandshakeExpectations {
-  /** ВЛАСНИЙ домен сайту з конфігу. Ніколи не значення з відповіді relay. */
+  /** СОБСТВЕННЫЙ домен сайта из конфига. Никогда не значение из ответа relay. */
   expectedDomain: string;
   /**
-   * Наскільки старим може бути підпис на момент перевірки. `Infinity` —
-   * свіжість не перевіряється (відновлення сесії, якій може бути до 7 днів);
-   * підпис "з майбутнього" понад розбіг годинників відхиляється завжди.
+   * Насколько старой может быть подпись на момент проверки. `Infinity` —
+   * свежесть не проверяется (восстановление сессии, которой может быть до 7 дней);
+   * подпись "из будущего" сверх расхождения часов отклоняется всегда.
    */
   maxAgeMs: number;
   now?: number;
@@ -51,42 +51,42 @@ export interface HandshakeExpectations {
 
 export type HandshakeFailure = 'domain_mismatch' | 'stale_proof' | 'address_mismatch' | 'invalid_signature';
 
-/** Допустимий розбіг годинників гаманця і сайту — те саме PROOF_MAX_AGE_MS, що в relay. */
+/** Допустимое расхождение часов кошелька и сайта — то же PROOF_MAX_AGE_MS, что в relay. */
 export const PROOF_MAX_CLOCK_SKEW_MS = 120_000;
 
 const MINTER_ADDRESS_RE = /^Mx[0-9a-fA-F]{40}$/;
 
 /**
- * Домен у підписі — `URL.host`: нижній регістр, порт лише нестандартний.
- * Нормалізація та сама, що в relay (`normalizeDomain`), інакше `App.Example`
- * і `app.example` давали б різні рядки підпису.
+ * Домен в подписи — `URL.host`: нижний регистр, порт только нестандартный.
+ * Нормализация та же, что в relay (`normalizeDomain`), иначе `App.Example`
+ * и `app.example` давали бы разные строки подписи.
  */
 export function normalizeDomain(domain: string): string {
   return domain.trim().toLowerCase();
 }
 
 /**
- * Канонічне повідомлення relay (`canonicalMessage.handshake`). Hex — завжди в
- * нижньому регістрі: схеми relay приймають будь-який регістр, тож без
- * нормалізації підпис не збігся б з повідомленням, зібраним з того, що relay
- * віддав.
+ * Каноническое сообщение relay (`canonicalMessage.handshake`). Hex — всегда в
+ * нижнем регистре: схемы relay принимают любой регистр, поэтому без
+ * нормализации подпись не совпала бы с сообщением, собранным из того, что relay
+ * отдал.
  */
 export function handshakeMessage(sessionId: string, ecdhPublicKeyHex: string, domain: string, issuedAt: number): string {
   return `minter-connect:handshake:${sessionId}:${ecdhPublicKeyHex.toLowerCase()}:${normalizeDomain(domain)}:${issuedAt}`;
 }
 
 /**
- * Порядок перевірок — як у relay: домен, свіжість, адреса, підпис.
- * Домен у підписі — аналог `ton_proof`: підпис, який гаманець дав
- * фішинговому сайту, тут не пройде, бо expectedDomain інший.
+ * Порядок проверок — как в relay: домен, свежесть, адрес, подпись.
+ * Домен в подписи — аналог `ton_proof`: подпись, которую кошелёк дал
+ * фишинговому сайту, здесь не пройдёт, потому что expectedDomain другой.
  */
 export function verifyHandshake(claim: HandshakeClaim, expect: HandshakeExpectations): HandshakeFailure | null {
   if (normalizeDomain(claim.domain) !== normalizeDomain(expect.expectedDomain)) return 'domain_mismatch';
 
   const now = expect.now ?? Date.now();
   if (!Number.isSafeInteger(claim.issuedAt)) return 'stale_proof';
-  // Майбутнє — лише в межах розбігу годинників, інакше підпис "з запасом"
-  // жив би скільки завгодно.
+  // Будущее — только в пределах расхождения часов, иначе подпись "с запасом"
+  // жила бы сколько угодно.
   if (now - claim.issuedAt > expect.maxAgeMs || claim.issuedAt - now > PROOF_MAX_CLOCK_SKEW_MS) return 'stale_proof';
 
   if (!publicKeyMatchesAddress(claim.identityPublicKeyHex, claim.walletAddress)) return 'address_mismatch';
@@ -99,17 +99,17 @@ export function verifyHandshake(claim: HandshakeClaim, expect: HandshakeExpectat
       claim.signature,
     );
   } catch {
-    // Структурно некоректний ввід (не-hex, точка не на кривій) — для нас це
-    // така сама відмова, як і невірний підпис.
+    // Структурно некорректный ввод (не-hex, точка не на кривой) — для нас это
+    // такой же отказ, как и неверная подпись.
     valid = false;
   }
   return valid ? null : 'invalid_signature';
 }
 
 /**
- * address = last20( keccak256( 64 байти координат БЕЗ префікса 0x04 ) ), з
- * префіксом "Mx" замість "0x". Хеш РІВНО від 64 байт: якщо захешувати всі 65
- * (з 0x04), вийде інша адреса — і жодної помилки при цьому не буде.
+ * address = last20( keccak256( 64 байта координат БЕЗ префикса 0x04 ) ), с
+ * префиксом "Mx" вместо "0x". Хеш РОВНО от 64 байт: если захешировать все 65
+ * (с 0x04), получится другой адрес — и никакой ошибки при этом не будет.
  */
 export function publicKeyToMinterAddress(publicKeyHex: string): string {
   const raw64 = toRawCoordinates(publicKeyHex);
@@ -126,22 +126,22 @@ function publicKeyMatchesAddress(publicKeyHex: string, address: string): boolean
 }
 
 function verifySignature(publicKeyHex: string, message: string, signatureHex: string): boolean {
-  // @noble/secp256k1 v3 не тягне хеш сам; verify без цього кидає
-  // "hashes.sha256 not set". Присвоєння ідемпотентне й без побічних ефектів
-  // для середовища, тому робимо його ліниво, а не на імпорті модуля.
+  // @noble/secp256k1 v3 не тянет хеш сам; verify без этого бросает
+  // "hashes.sha256 not set". Присваивание идемпотентно и без побочных эффектов
+  // для окружения, поэтому делаем его лениво, а не при импорте модуля.
   secp.hashes.sha256 ??= sha256;
   const msgHash = sha256(new TextEncoder().encode(message));
   return secp.verify(secp.etc.hexToBytes(signatureHex), msgHash, secp.etc.hexToBytes(publicKeyHex));
 }
 
-/** Приймає ключ у compressed (33), uncompressed (65) або "сирих" координатах (64). */
+/** Принимает ключ в compressed (33), uncompressed (65) или "сырых" координатах (64). */
 function toRawCoordinates(publicKeyHex: string): Uint8Array {
   const hex = publicKeyHex.startsWith('0x') ? publicKeyHex.slice(2) : publicKeyHex;
   if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length % 2 !== 0) throw new Error('invalid_public_key_hex');
 
   const bytes = secp.etc.hexToBytes(hex.toLowerCase());
-  // Point.fromBytes перевіряє, що точка справді лежить на кривій: без цього
-  // 65 нульових байт із префіксом 0x04 "успішно" перетворились би на адресу.
+  // Point.fromBytes проверяет, что точка действительно лежит на кривой: без этого
+  // 65 нулевых байт с префиксом 0x04 "успешно" превратились бы в адрес.
   const forPoint = bytes.length === 64 ? secp.etc.concatBytes(Uint8Array.of(0x04), bytes) : bytes;
   return secp.Point.fromBytes(forPoint).toBytes(false).subarray(1);
 }

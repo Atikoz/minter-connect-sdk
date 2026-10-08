@@ -18,10 +18,10 @@ import {
   type SigningStatus,
 } from './types.js';
 
-/** Те, що relay віддає в GET /sessions/:sessionId. */
+/** То, что relay отдаёт в GET /sessions/:sessionId. */
 interface RelaySessionState {
   status: SessionStatus;
-  /** Домен, який гаманець підписав. Заявка relay — звіряється з НАШИМ доменом. */
+  /** Домен, который кошелёк подписал. Заявка relay — сверяется с НАШИМ доменом. */
   dexDomain: string | null;
   walletAddress: string | null;
   walletPublicKeyHex: string | null;
@@ -36,22 +36,22 @@ export interface SessionDeps {
   sessionId: string;
   deepLink: string;
   ephemeralSecretKey: Uint8Array;
-  /** Bearer-токен сесії з POST /sessions. */
+  /** Bearer-токен сессии из POST /sessions. */
   dexToken: string;
-  /** Власний домен сайту з конфігу клієнта. */
+  /** Собственный домен сайта из конфига клиента. */
   expectedDomain: string;
-  /** ISO-8601 дедлайн pairing'у з POST /sessions. */
+  /** ISO-8601 дедлайн pairing'а из POST /sessions. */
   expiresAt: string | null;
   requestTimeoutMs?: number;
   requireHandshakeProof?: boolean;
 }
 
 export interface WaitForConnectionOptions {
-  /** Стартовий інтервал поллінгу. Далі росте до maxIntervalMs. */
+  /** Начальный интервал поллинга. Дальше растёт до maxIntervalMs. */
   intervalMs?: number;
-  /** Стеля інтервалу поллінгу. */
+  /** Потолок интервала поллинга. */
   maxIntervalMs?: number;
-  /** Бюджет усього очікування. Після нього — `connection_timeout`. */
+  /** Бюджет всего ожидания. После него — `connection_timeout`. */
   timeoutMs?: number;
 }
 
@@ -59,63 +59,63 @@ export interface WaitForSignatureOptions {
   pollIntervalMs?: number;
   maxIntervalMs?: number;
   /**
-   * Бюджет очікування. За замовчуванням виводиться з `expiresAt`, який relay
-   * повернув на POST /requests, плюс запас на кілька інтервалів поллінгу.
+   * Бюджет ожидания. По умолчанию выводится из `expiresAt`, который relay
+   * вернул на POST /requests, плюс запас на несколько интервалов поллинга.
    */
   timeoutMs?: number;
 }
 
 export interface RequestTransactionOptions {
-  /** X-Request-Id для наскрізного трасування relay -> воркер -> вебхук. */
+  /** X-Request-Id для сквозной трассировки relay -> воркер -> вебхук. */
   requestId?: string;
 }
 
 /**
- * Запас понад TTL запиту. Без нього SDK здається рівно в ту мить, коли запит
- * протухає: гонка вирішується як `signing_timeout` (нічого не зрозуміло)
- * замість `signing_expired` (зрозуміло: гаманець не встиг).
+ * Запас сверх TTL запроса. Без него SDK сдаётся ровно в тот момент, когда запрос
+ * протухает: гонка решается как `signing_timeout` (ничего не понятно)
+ * вместо `signing_expired` (понятно: кошелёк не успел).
  */
 const SIGNING_GRACE_MS = 15_000;
 
-/** Фолбек, якщо relay не повернув expiresAt: дефолтний REQUEST_TTL_MS relay. */
+/** Фолбэк, если relay не вернул expiresAt: дефолтный REQUEST_TTL_MS relay. */
 const FALLBACK_REQUEST_TTL_MS = 90_000;
 
 /**
- * Запас понад дедлайн pairing'у — рівно та сама логіка, що й SIGNING_GRACE_MS:
- * дає relay встигнути перевести сесію в `expired`, щоб користувач побачив
- * "час вийшов", а не безадресний `connection_timeout`.
+ * Запас сверх дедлайна pairing'а — ровно та же логика, что и SIGNING_GRACE_MS:
+ * даёт relay успеть перевести сессию в `expired`, чтобы пользователь увидел
+ * "время вышло", а не безадресный `connection_timeout`.
  */
 const PAIRING_GRACE_MS = 10_000;
 
-/** Фолбек, якщо relay не повернув expiresAt на POST /sessions: його PAIRING_TTL_MS. */
+/** Фолбэк, если relay не вернул expiresAt на POST /sessions: его PAIRING_TTL_MS. */
 const FALLBACK_PAIRING_TTL_MS = 300_000;
 
 /**
- * Вік підпису handshake, з яким його приймає waitForConnection(). Гаманець
- * підписує в момент підтвердження, а pairing живе 5 хв — 10 хв дають запас на
- * повільний поллінг, але не дають підсунути старий підпис.
+ * Возраст подписи handshake, с которым её принимает waitForConnection(). Кошелёк
+ * подписывает в момент подтверждения, а pairing живёт 5 мин — 10 мин дают запас на
+ * медленный поллинг, но не дают подсунуть старую подпись.
  */
 const CONNECT_PROOF_MAX_AGE_MS = 10 * 60_000;
 
-/** Скільки тримати expiresAt завершених запитів, перш ніж прибрати з мапи. */
+/** Сколько держать expiresAt завершённых запросов, прежде чем убрать из мапы. */
 const REQUEST_EXPIRY_RETENTION_MS = 10 * 60_000;
 
 /**
- * Один pairing-сеанс із конкретним гаманцем юзера. Отримується через
- * MinterConnectClient.createSession() — ніколи не створюється напряму.
+ * Один pairing-сеанс с конкретным кошельком юзера. Получается через
+ * MinterConnectClient.createSession() — никогда не создаётся напрямую.
  *
- * Уся крипто-механіка (ECDH, AES-GCM, identity-vs-ecdh ключі) захована тут.
- * Інтегратору не потрібно знати про жоден із цих деталей.
+ * Вся крипто-механика (ECDH, AES-GCM, identity-vs-ecdh ключи) спрятана здесь.
+ * Интегратору не нужно знать ни об одной из этих деталей.
  */
 export class MinterConnectSession {
   readonly sessionId: string;
   readonly deepLink: string;
   walletAddress: string | null = null;
-  /** Чи перевірено доказ handshake самостійно. Заповнюється у waitForConnection(). */
+  /** Проверено ли доказательство handshake самостоятельно. Заполняется в waitForConnection(). */
   handshakeVerified = false;
   /**
-   * ISO-8601 строк життя. До підтвердження — дедлайн pairing'у (relay дає
-   * 5 хвилин), після waitForConnection() — дедлайн самої сесії (7 днів).
+   * ISO-8601 срок жизни. До подтверждения — дедлайн pairing'а (relay даёт
+   * 5 минут), после waitForConnection() — дедлайн самой сессии (7 дней).
    */
   expiresAt: string | null;
 
@@ -127,7 +127,7 @@ export class MinterConnectSession {
   private readonly requireHandshakeProof: boolean;
   private readonly abortController = new AbortController();
   private aesKey: CryptoKey | null = null;
-  /** reqId -> момент протухання (ms), щоб waitForSignature знав реальний дедлайн. */
+  /** reqId -> момент протухания (ms), чтобы waitForSignature знал реальный дедлайн. */
   private readonly requestExpiries = new Map<string, number>();
 
   constructor(deps: SessionDeps) {
@@ -142,24 +142,24 @@ export class MinterConnectSession {
     this.requireHandshakeProof = deps.requireHandshakeProof ?? true;
   }
 
-  /** true після close(). Будь-який виклик на закритій сесії дасть `session_closed`. */
+  /** true после close(). Любой вызов на закрытой сессии даст `session_closed`. */
   get isClosed(): boolean {
     return this.abortController.signal.aborted;
   }
 
-  /** Чи готова сесія підписувати: handshake пройдено і ключ каналу виведено. */
+  /** Готова ли сессия подписывать: handshake пройден и ключ канала выведен. */
   get isConnected(): boolean {
     return this.aesKey !== null && this.walletAddress !== null;
   }
 
   /**
-   * Стан для збереження між запусками DEX. Relay тримає підтверджену сесію
-   * 7 днів, але ephemeral-ключ живе лише в пам'яті цього інстанса — без
-   * serialize() перезавантаження сторінки вимагає нового пейрінгу, і цей TTL
-   * обслуговує тільки сторону гаманця.
+   * Состояние для сохранения между запусками DEX. Relay держит подтверждённую сессию
+   * 7 дней, но ephemeral-ключ живёт только в памяти этого инстанса — без
+   * serialize() перезагрузка страницы требует нового пейринга, и этот TTL
+   * обслуживает только сторону кошелька.
    *
-   * Повертає ДВА СЕКРЕТИ (ephemeral-ключ і dexToken, див. SerializedSession):
-   * зберігайте лише на сервері або зашифрованими. Відновлення — через
+   * Возвращает ДВА СЕКРЕТА (ephemeral-ключ и dexToken, см. SerializedSession):
+   * храните только на сервере или в зашифрованном виде. Восстановление — через
    * MinterConnectClient.restoreSession().
    */
   serialize(): SerializedSession {
@@ -172,15 +172,15 @@ export class MinterConnectSession {
   }
 
   /**
-   * Один запит до relay замість циклу поллінгу: підтягує актуальний стан
-   * відновленої сесії. Повертає `null`, якщо гаманець ще не підтвердив
-   * підключення, — тоді далі йде звичайний waitForConnection().
+   * Один запрос к relay вместо цикла поллинга: подтягивает актуальное состояние
+   * восстановленной сессии. Возвращает `null`, если кошелёк ещё не подтвердил
+   * подключение, — тогда дальше идёт обычный waitForConnection().
    *
-   * Викликається з restoreSession(); окремо потрібен рідко.
+   * Вызывается из restoreSession(); отдельно нужен редко.
    *
-   * Свіжість підпису handshake тут НЕ перевіряється: сесію могли підтвердити
-   * до 7 днів тому, і з перевіркою "не старше 10 хв" відновлення падало б
-   * завжди. Домен, адреса і підпис перевіряються як завжди.
+   * Свежесть подписи handshake здесь НЕ проверяется: сессию могли подтвердить
+   * до 7 дней назад, и с проверкой "не старше 10 мин" восстановление падало бы
+   * всегда. Домен, адрес и подпись проверяются как всегда.
    */
   async resume(): Promise<ConnectionResult | null> {
     this.assertOpen();
@@ -207,30 +207,30 @@ export class MinterConnectSession {
   }
 
   /**
-   * Припиняє всі цикли поллінгу цієї сесії й перериває запити, що вже в польоті.
-   * Викликайте, коли користувач пішов зі сторінки або скасував операцію:
-   * інакше waitForConnection() продовжить довбити relay до свого таймауту.
+   * Прекращает все циклы поллинга этой сессии и прерывает запросы, которые уже в полёте.
+   * Вызывайте, когда пользователь ушёл со страницы или отменил операцию:
+   * иначе waitForConnection() продолжит долбить relay до своего таймаута.
    *
-   * Сесію на relay це НЕ відкликає (відкликати може лише гаманець) — це
-   * локальне звільнення ресурсів. Ідемпотентний.
+   * Сессию на relay это НЕ отзывает (отозвать может только кошелёк) — это
+   * локальное освобождение ресурсов. Идемпотентный.
    */
   close(): void {
     if (!this.abortController.signal.aborted) this.abortController.abort();
   }
 
-  /** Аліас до close() для `await using` / звичного dispose-найменування. */
+  /** Алиас к close() для `await using` / привычного dispose-именования. */
   dispose(): void {
     this.close();
   }
 
-  /** Поллить relay, поки юзер не підтвердить конект у гаманці (або поки не вийде час). */
+  /** Опрашивает relay, пока юзер не подтвердит подключение в кошельке (или пока не выйдет время). */
   async waitForConnection(options: WaitForConnectionOptions = {}): Promise<ConnectionResult> {
     const { intervalMs = 2000, maxIntervalMs = 10_000 } = options;
     const timeoutMs = options.timeoutMs ?? this.defaultPairingTimeoutMs();
     this.assertOpen();
 
-    // Відновлена сесія вже перевірена в resume(). Повторна перевірка тут
-    // ішла б із вікном 10 хв і відкидала б handshake, підписаний учора.
+    // Восстановленная сессия уже проверена в resume(). Повторная проверка здесь
+    // шла бы с окном 10 мин и отбрасывала бы handshake, подписанный вчера.
     if (this.isConnected) return this.connectionResult();
 
     const deadline = Date.now() + timeoutMs;
@@ -241,10 +241,10 @@ export class MinterConnectSession {
 
       this.expiresAt = session.expiresAt ?? this.expiresAt;
 
-      // Термінальні статуси. Раніше цикл їх ігнорував і крутився до кінця
-      // timeoutMs, після чого кидав connection_timeout — тобто повідомляв
-      // НЕПРАВДИВУ причину: користувач не "не встиг", він відмовив або
-      // сесія вже мертва, і чекати не було сенсу з першої ж ітерації.
+      // Терминальные статусы. Раньше цикл их игнорировал и крутился до конца
+      // timeoutMs, после чего бросал connection_timeout — то есть сообщал
+      // НЕВЕРНУЮ причину: пользователь не "не успел", он отказал или
+      // сессия уже мертва, и ждать не было смысла с первой же итерации.
       if (session.status === 'revoked') {
         throw new MinterConnectError(
           'session_revoked',
@@ -271,11 +271,11 @@ export class MinterConnectSession {
   }
 
   /**
-   * Просить гаманець підписати переказ і чекає результат. Це найпростіший
-   * спосіб використання SDK — для більшості інтеграторів іншого й не треба.
+   * Просит кошелёк подписать перевод и ждёт результат. Это самый простой
+   * способ использования SDK — большинству интеграторов другого и не нужно.
    *
-   * Повертає signedTxHex. У мережу його відправляє САЙТ (Gate/Node API,
-   * `send_transaction`): ні relay, ні гаманець транзакцію не транслюють.
+   * Возвращает signedTxHex. В сеть его отправляет САЙТ (Gate/Node API,
+   * `send_transaction`): ни relay, ни кошелёк транзакцию не транслируют.
    */
   async sendTransaction(
     params: SendTransactionParams,
@@ -286,10 +286,10 @@ export class MinterConnectSession {
   }
 
   /**
-   * Створює запит на підпис, повертає reqId одразу — для інтеграторів, яким
-   * треба надіслати кілька транзакцій і чекати їх окремо/паралельно.
+   * Создаёт запрос на подпись, возвращает reqId сразу — для интеграторов, которым
+   * нужно отправить несколько транзакций и ждать их отдельно/параллельно.
    *
-   * Некоректні params дають `invalid_request` ДО будь-якого запиту в мережу.
+   * Некорректные params дают `invalid_request` ДО любого запроса в сеть.
    */
   async requestTransaction(params: SendTransactionParams, options: RequestTransactionOptions = {}): Promise<string> {
     this.assertOpen();
@@ -308,9 +308,9 @@ export class MinterConnectSession {
   }
 
   /**
-   * Чекає результат конкретного reqId, отриманого від requestTransaction().
-   * Повертає signedTxHex; відмова гаманця — `signing_rejected`,
-   * `wallet_bad_request` або `wallet_signing_failed`.
+   * Ждёт результат конкретного reqId, полученного от requestTransaction().
+   * Возвращает signedTxHex; отказ кошелька — `signing_rejected`,
+   * `wallet_bad_request` или `wallet_signing_failed`.
    */
   async waitForSignature(reqId: string, options: WaitForSignatureOptions = {}): Promise<string> {
     this.assertConnected();
@@ -332,8 +332,8 @@ export class MinterConnectSession {
 
         if (result.status === 'signed') return await this.readSignedResult(reqId, result.encryptedResult);
         if (result.status === 'rejected') {
-          // Relay також переводить pending-запити в 'rejected' без результату,
-          // коли гаманець відкликає сесію, — це теж wallet_bad_request.
+          // Relay также переводит pending-запросы в 'rejected' без результата,
+          // когда кошелёк отзывает сессию, — это тоже wallet_bad_request.
           throw walletRejectionError(reqId, await this.tryDecrypt(result.encryptedResult));
         }
         if (result.status === 'expired') {
@@ -351,7 +351,7 @@ export class MinterConnectSession {
   }
 
   /* ------------------------------------------------------------------ *
-   * Внутрішнє
+   * Внутреннее
    * ------------------------------------------------------------------ */
 
   private async readSignedResult(reqId: string, encryptedResult: EncryptedPayload | null): Promise<string> {
@@ -366,13 +366,13 @@ export class MinterConnectSession {
     return signedTxHex;
   }
 
-  /** `undefined` — результату немає або він не розшифровується цим ключем. */
+  /** `undefined` — результата нет или он не расшифровывается этим ключом. */
   private async tryDecrypt(encrypted: EncryptedPayload | null | undefined): Promise<unknown> {
     if (!encrypted) return undefined;
     try {
       return await decryptPayload<unknown>(this.aesKey!, encrypted);
     } catch (err) {
-      // Відсутній Web Crypto — проблема середовища, а не результату.
+      // Отсутствующий Web Crypto — проблема окружения, а не результата.
       if (err instanceof MinterConnectError) throw err;
       return undefined;
     }
@@ -387,12 +387,12 @@ export class MinterConnectSession {
   }
 
   /**
-   * Спільний шлях для waitForConnection() і resume(): перевірити доказ,
-   * запам'ятати адресу, вивести ключ каналу. `null` — сесія ще не connected.
+   * Общий путь для waitForConnection() и resume(): проверить доказательство,
+   * запомнить адрес, вывести ключ канала. `null` — сессия ещё не connected.
    *
-   * Доказ перевіряється ЩОРАЗУ, зокрема й після відновлення зі сховища. Тому
-   * персистентність нічого не послаблює: збереженого `handshakeVerified` не
-   * існує, є лише свіжий підпис гаманця, перевірений заново.
+   * Доказательство проверяется КАЖДЫЙ РАЗ, в том числе после восстановления из хранилища.
+   * Поэтому персистентность ничего не ослабляет: сохранённого `handshakeVerified` не
+   * существует, есть только свежая подпись кошелька, проверенная заново.
    */
   private async adoptConnectedState(
     session: RelaySessionState,
@@ -409,10 +409,10 @@ export class MinterConnectSession {
   }
 
   /**
-   * Дедлайн пейрінгу береться з expiresAt, який relay повернув на
-   * POST /sessions, — так само, як дедлайн підпису береться з POST /requests.
-   * Хардкод 120_000 був удвічі коротший за PAIRING_TTL_MS relay: SDK кидав
-   * connection_timeout, поки посилання ще було цілком робоче.
+   * Дедлайн пейринга берётся из expiresAt, который relay вернул на
+   * POST /sessions, — так же, как дедлайн подписи берётся из POST /requests.
+   * Хардкод 120_000 был вдвое короче PAIRING_TTL_MS relay: SDK бросал
+   * connection_timeout, пока ссылка ещё была вполне рабочей.
    */
   private defaultPairingTimeoutMs(): number {
     const expiry = this.expiresAt ? Date.parse(this.expiresAt) : Number.NaN;
@@ -421,11 +421,11 @@ export class MinterConnectSession {
   }
 
   /**
-   * Перевіряє доказ, який relay віддає в GET /sessions/:sessionId.
+   * Проверяет доказательство, которое relay отдаёт в GET /sessions/:sessionId.
    *
-   * Провал — це не "спробуй ще": або relay підмінив ECDH-ключ каналу, або
-   * адресу. В обох випадках подальше шифрування безглузде, тому кидаємо
-   * одразу і НЕ позначаємо помилку як таку, що лікується перепідключенням.
+   * Провал — это не "попробуй ещё": либо relay подменил ECDH-ключ канала, либо
+   * адрес. В обоих случаях дальнейшее шифрование бессмысленно, поэтому бросаем
+   * сразу и НЕ помечаем ошибку как лечащуюся переподключением.
    */
   private checkHandshake(
     session: RelaySessionState,
@@ -452,8 +452,8 @@ export class MinterConnectSession {
         walletAddress,
         identityPublicKeyHex,
         ecdhPublicKeyHex,
-        // Домен і час — те, що relay заявляє як підписане. Перевіряється
-        // підписом і порівнянням з НАШИМ expectedDomain, а не довірою.
+        // Домен и время — то, что relay заявляет как подписанное. Проверяется
+        // подписью и сравнением с НАШИМ expectedDomain, а не доверием.
         domain: session.dexDomain ?? '',
         issuedAt: session.handshakeIssuedAt ?? Number.NaN,
         signature: handshakeSignature,
@@ -475,9 +475,9 @@ export class MinterConnectSession {
   }
 
   /**
-   * Дедлайн береться з expiresAt, який relay повернув на POST /requests, —
-   * це єдине джерело істини про TTL. Хардкод 90_000 у SDK збігався з
-   * REQUEST_TTL_MS relay рівно, тож SDK і relay здавались одночасно.
+   * Дедлайн берётся из expiresAt, который relay вернул на POST /requests, —
+   * это единственный источник истины о TTL. Хардкод 90_000 в SDK совпадал с
+   * REQUEST_TTL_MS relay ровно, поэтому SDK и relay сдавались одновременно.
    */
   private defaultSigningTimeoutMs(reqId: string): number {
     const expiry = this.requestExpiries.get(reqId);
@@ -489,8 +489,8 @@ export class MinterConnectSession {
     const parsed = expiresAt ? Date.parse(expiresAt) : Number.NaN;
     if (!Number.isNaN(parsed)) this.requestExpiries.set(reqId, parsed);
 
-    // Довгоживуча сесія (7 днів) може зробити багато запитів; підчищаємо
-    // давно протухлі записи, щоб мапа не росла нескінченно.
+    // Долгоживущая сессия (7 дней) может сделать много запросов; подчищаем
+    // давно протухшие записи, чтобы мапа не росла бесконечно.
     const cutoff = Date.now() - REQUEST_EXPIRY_RETENTION_MS;
     for (const [id, at] of this.requestExpiries) {
       if (at < cutoff) this.requestExpiries.delete(id);
@@ -498,9 +498,9 @@ export class MinterConnectSession {
   }
 
   /**
-   * 429 у циклі поллінгу не фатальний: relay сам каже, скільки чекати.
-   * Фатальним він лишається тільки якщо чекати довше, ніж дозволяє бюджет
-   * усього очікування, — інакше ми б мовчки перевищили заявлений timeoutMs.
+   * 429 в цикле поллинга не фатален: relay сам говорит, сколько ждать.
+   * Фатальным он остаётся, только если ждать дольше, чем позволяет бюджет
+   * всего ожидания, — иначе мы бы молча превысили заявленный timeoutMs.
    */
   private async pollWithRateLimit<T>(request: () => Promise<T>, deadline: number): Promise<T> {
     for (;;) {
@@ -515,7 +515,7 @@ export class MinterConnectSession {
     }
   }
 
-  /** Пауза з джитером, обрізана дедлайном циклу. */
+  /** Пауза с джиттером, обрезанная дедлайном цикла. */
   private async sleepUntil(interval: number, deadline: number): Promise<void> {
     const remaining = deadline - Date.now();
     if (remaining <= 0) return;

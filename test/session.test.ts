@@ -1,7 +1,7 @@
 /**
- * Поведінка циклів очікування: термінальні статуси, ліміти, таймаути,
- * скасування. Усе — без справжньої мережі й без справжнього годинника там,
- * де інакше тест тривав би хвилини.
+ * Поведение циклов ожидания: терминальные статусы, лимиты, таймауты,
+ * отмена. Всё — без настоящей сети и без настоящих часов там,
+ * где иначе тест длился бы минуты.
  */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
@@ -46,8 +46,8 @@ const sessionReply = (status: string, extra: Record<string, unknown> = {}): Stub
   },
 });
 
-describe('waitForConnection: термінальні статуси', () => {
-  it('revoked -> session_revoked одразу, а не connection_timeout через 2 хвилини', async () => {
+describe('waitForConnection: терминальные статусы', () => {
+  it('revoked -> session_revoked сразу, а не connection_timeout через 2 минуты', async () => {
     const { client, stub } = clientWith((i) =>
       i === 0 ? { json: createdSessionReply(FAKE_SESSION_ID) } : sessionReply('revoked'),
     );
@@ -60,10 +60,10 @@ describe('waitForConnection: термінальні статуси', () => {
 
     expect(err.code).toBe('session_revoked');
     expect(Date.now() - startedAt).toBeLessThan(1000);
-    expect(stub.calls).toHaveLength(2); // POST + один GET, без марного поллінгу
+    expect(stub.calls).toHaveLength(2); // POST + один GET, без лишнего поллинга
   });
 
-  it('expired -> session_expired одразу', async () => {
+  it('expired -> session_expired сразу', async () => {
     const { client } = clientWith((i) =>
       i === 0 ? { json: createdSessionReply(FAKE_SESSION_ID) } : sessionReply('expired'),
     );
@@ -76,7 +76,7 @@ describe('waitForConnection: термінальні статуси', () => {
     expect(err.code).toBe('session_expired');
   });
 
-  it('pending поллиться далі й доходить до connected', async () => {
+  it('pending опрашивается дальше и доходит до connected', async () => {
     const wallet = createSimulatedWallet();
     const { client, stub } = clientWith((i) => {
       if (i === 0) return { json: createdSessionReply(FAKE_SESSION_ID) };
@@ -88,15 +88,15 @@ describe('waitForConnection: термінальні статуси', () => {
     const result = await session.waitForConnection({ intervalMs: 5, timeoutMs: 5000 });
 
     expect(result.walletAddress).toBe(wallet.address);
-    // C2: expiresAt більше не викидається — DEX знає, коли сесія помре.
+    // C2: expiresAt больше не выбрасывается — DEX знает, когда сессия умрёт.
     expect(result.expiresAt).toBe('2030-01-01T00:00:00.000Z');
     expect(session.expiresAt).toBe('2030-01-01T00:00:00.000Z');
     expect(stub.calls.length).toBeGreaterThanOrEqual(4);
   });
 });
 
-describe('rate limit у поллінгу', () => {
-  it('429 не фатальний: SDK чекає Retry-After і продовжує', async () => {
+describe('rate limit в поллинге', () => {
+  it('429 не фатален: SDK ждёт Retry-After и продолжает', async () => {
     const wallet = createSimulatedWallet();
     const { client } = clientWith((i) => {
       if (i === 0) return { json: createdSessionReply(FAKE_SESSION_ID) };
@@ -109,7 +109,7 @@ describe('rate limit у поллінгу', () => {
     expect(result.walletAddress).toBe(wallet.address);
   });
 
-  it('якщо Retry-After довший за бюджет очікування — віддає саме rate_limited', async () => {
+  it('если Retry-After дольше бюджета ожидания — отдаёт именно rate_limited', async () => {
     const { client } = clientWith((i) =>
       i === 0
         ? { json: createdSessionReply(FAKE_SESSION_ID) }
@@ -124,13 +124,13 @@ describe('rate limit у поллінгу', () => {
 
     expect(err.code).toBe('rate_limited');
     expect(err.retryAfterMs).toBe(300_000);
-    // Головне: не спимо 5 хвилин "усередині" таймауту на 1 секунду.
+    // Главное: не спим 5 минут "внутри" таймаута на 1 секунду.
     expect(Date.now() - startedAt).toBeLessThan(1000);
   });
 });
 
-describe('таймаут окремого запиту', () => {
-  it('зависла відповідь переривається, а не блокує назавжди', async () => {
+describe('таймаут отдельного запроса', () => {
+  it('зависший ответ прерывается, а не блокирует навсегда', async () => {
     const { client } = clientWith(() => ({ hang: true }), { requestTimeoutMs: 100 });
 
     const startedAt = Date.now();
@@ -141,7 +141,7 @@ describe('таймаут окремого запиту', () => {
     expect(Date.now() - startedAt).toBeLessThan(3000);
   });
 
-  it('зависання під час поллінгу не з\'їдає весь бюджет циклу', async () => {
+  it('зависание во время поллинга не съедает весь бюджет цикла', async () => {
     const wallet = createSimulatedWallet();
     const { client } = clientWith(
       (i) => {
@@ -153,8 +153,8 @@ describe('таймаут окремого запиту', () => {
     );
     const session = await client.createSession();
 
-    // Перший GET висне; його обриває таймаут запиту, і саме тому цикл
-    // встигає зробити другий GET у межах свого timeoutMs.
+    // Первый GET виснет; его обрывает таймаут запроса, и именно поэтому цикл
+    // успевает сделать второй GET в пределах своего timeoutMs.
     const err = (await session.waitForConnection({ intervalMs: 5, timeoutMs: 3000 }).catch((e: unknown) => e)) as
       | MinterConnectError
       | { walletAddress: string };
@@ -164,7 +164,7 @@ describe('таймаут окремого запиту', () => {
 });
 
 describe('close()', () => {
-  it('перериває поллінг, що вже триває', async () => {
+  it('прерывает уже идущий поллинг', async () => {
     const { client } = clientWith((i) =>
       i === 0 ? { json: createdSessionReply(FAKE_SESSION_ID) } : sessionReply('pending'),
     );
@@ -179,7 +179,7 @@ describe('close()', () => {
     expect(session.isClosed).toBe(true);
   });
 
-  it('ідемпотентний, а наступні виклики одразу дають session_closed', async () => {
+  it('идемпотентен, а следующие вызовы сразу дают session_closed', async () => {
     const { client } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     const session = await client.createSession();
 
@@ -192,15 +192,15 @@ describe('close()', () => {
   });
 });
 
-describe('підпис', () => {
-  it('шифрує рівно { v: 1, method, params }, шле dexToken і повертає signedTxHex', async () => {
+describe('подпись', () => {
+  it('шифрует ровно { v: 1, method, params }, шлёт dexToken и возвращает signedTxHex', async () => {
     let captured: { iv: string; ciphertext: string } | undefined;
     const { session, walletAesKey, calls } = await connectSession(async (call) => {
       if (call.method === 'POST') {
         captured = (call.body as { encryptedPayload: { iv: string; ciphertext: string } }).encryptedPayload;
         return pendingRequestReply(FAKE_REQ_ID);
       }
-      // Гаманець підписав: шифруємо відповідь СВОЇМ ключем.
+      // Кошелёк подписал: шифруем ответ СВОИМ ключом.
       const encryptedResult = await encryptPayload(walletAesKey, { signedTxHex: 'f8a0deadbeef' });
       return { json: { status: 'signed', encryptedResult } };
     });
@@ -211,11 +211,11 @@ describe('підпис', () => {
     expect(await decryptPayload(walletAesKey, captured!)).toEqual({ v: 1, method: 'sendTransaction', params: VALID_TX });
     expect(calls.some((c) => c.url === `${RELAY_URL}/sessions/${FAKE_SESSION_ID}/requests`)).toBe(true);
 
-    // Усі маршрути DEX після POST /sessions — з Bearer-токеном сесії.
+    // Все маршруты DEX после POST /sessions — с Bearer-токеном сессии.
     const dexCalls = calls.filter((c) => c.url !== `${RELAY_URL}/sessions`);
     expect(dexCalls.length).toBeGreaterThanOrEqual(3); // GET session, POST request, GET request
     for (const c of dexCalls) expect(c.headers.authorization).toBe(`Bearer ${TEST_DEX_TOKEN}`);
-    // А POST /sessions — без нього: токена ще немає.
+    // А POST /sessions — без него: токена ещё нет.
     expect(calls.find((c) => c.url === `${RELAY_URL}/sessions`)!.headers.authorization).toBeUndefined();
   });
 
@@ -228,7 +228,7 @@ describe('підпис', () => {
     });
   });
 
-  it('невалідні params -> invalid_request без жодного запиту в мережу', async () => {
+  it('невалидные params -> invalid_request без единого запроса в сеть', async () => {
     const { session, calls } = await connectSession(() => pendingRequestReply(FAKE_REQ_ID));
     const before = calls.length;
 
@@ -260,7 +260,7 @@ describe('підпис', () => {
     }
     expect(calls.length).toBe(before);
 
-    // Межові, але валідні значення гаманець приймає — SDK теж.
+    // Граничные, но валидные значения кошелёк принимает — SDK тоже.
     for (const params of [
       { ...VALID_TX, amount: '0.000000000000000001' },
       { ...VALID_TX, amount: '100' },
@@ -271,7 +271,7 @@ describe('підпис', () => {
     }
   });
 
-  it('невалідні params дають invalid_request навіть до підключення', async () => {
+  it('невалидные params дают invalid_request даже до подключения', async () => {
     const { client, stub } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     const session = await client.createSession();
 
@@ -279,17 +279,17 @@ describe('підпис', () => {
     expect(stub.calls).toHaveLength(1);
   });
 
-  it('sign() до waitForConnection() -> session_not_connected', async () => {
+  it('sendTransaction() до waitForConnection() -> session_not_connected', async () => {
     const { client } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     const session = await client.createSession();
 
     await expect(session.sendTransaction(VALID_TX)).rejects.toMatchObject({ code: 'session_not_connected' });
   });
 
-  it('дефолтний таймаут переживає TTL запиту, а не здається одночасно з ним', async () => {
-    // REQUEST_TTL_MS relay і старий дефолт SDK збігались (90_000), тож на
-    // протуханні вигравав той, хто перший: інтегратор ловив signing_timeout
-    // ("незрозуміло, спробуйте ще") замість signing_expired ("гаманець не встиг").
+  it('таймаут по умолчанию переживает TTL запроса, а не сдаётся одновременно с ним', async () => {
+    // REQUEST_TTL_MS relay и старый дефолт SDK совпадали (90_000), поэтому при
+    // протухании выигрывал тот, кто первый: интегратор ловил signing_timeout
+    // ("непонятно, попробуйте ещё") вместо signing_expired ("кошелёк не успел").
     const startedAt = Date.now();
     const { session, calls } = await connectSession((call) => {
       if (call.method === 'POST') return pendingRequestReply(FAKE_REQ_ID, 300); // TTL 300 мс
@@ -303,13 +303,13 @@ describe('підпис', () => {
       .catch((e: unknown) => e)) as MinterConnectError;
 
     expect(err.code).toBe('signing_expired');
-    // Поллінг тривав ПІСЛЯ дедлайну TTL — інакше фінальний статус не побачити.
+    // Поллинг шёл ПОСЛЕ дедлайна TTL — иначе финальный статус не увидеть.
     expect(calls.filter((c) => c.method === 'GET').length).toBeGreaterThan(2);
   });
 
-  it('навіть на вже протухлому TTL робить фінальний запит', async () => {
-    // expiresAt у минулому: без запасу дедлайн циклу дорівнював би нулю,
-    // цикл не виконався б жодного разу і віддав би signing_timeout.
+  it('даже на уже протухшем TTL делает финальный запрос', async () => {
+    // expiresAt в прошлом: без запаса дедлайн цикла равнялся бы нулю,
+    // цикл не выполнился бы ни разу и отдал бы signing_timeout.
     const { session } = await connectSession((call) =>
       call.method === 'POST'
         ? pendingRequestReply(FAKE_REQ_ID, -5_000)
@@ -324,8 +324,8 @@ describe('підпис', () => {
   });
 });
 
-describe('відмови гаманця (encryptedResult у rejected)', () => {
-  /** Підключена сесія; `result` гаманець шифрує своїм ключем і кладе в encryptedResult. */
+describe('отказы кошелька (encryptedResult в rejected)', () => {
+  /** Подключённая сессия; `result` кошелёк шифрует своим ключом и кладёт в encryptedResult. */
   async function connected(reply: (encryptedResult: unknown) => unknown, result?: unknown) {
     let encryptedResult: unknown = null;
     const fixture = await connectSession((call) =>
@@ -342,7 +342,7 @@ describe('відмови гаманця (encryptedResult у rejected)', () => {
     ['something_new', 'wallet_bad_request'],
   ];
   for (const [walletCode, sdkCode] of cases) {
-    it(`${walletCode} -> ${sdkCode}, message гаманця в walletErrorMessage`, async () => {
+    it(`${walletCode} -> ${sdkCode}, message кошелька в walletErrorMessage`, async () => {
       const session = await connected(
         (encryptedResult) => ({ status: 'rejected', encryptedResult }),
         { error: { code: walletCode, message: `wallet says ${walletCode}` } },
@@ -354,14 +354,14 @@ describe('відмови гаманця (encryptedResult у rejected)', () => {
     });
   }
 
-  it('rejected БЕЗ encryptedResult -> wallet_bad_request (так вимагає API.md)', async () => {
+  it('rejected БЕЗ encryptedResult -> wallet_bad_request (так требует API.md)', async () => {
     const session = await connected(() => ({ status: 'rejected', encryptedResult: null }));
     const err = (await session.sendTransaction(VALID_TX, { pollIntervalMs: 5 }).catch((e: unknown) => e)) as MinterConnectError;
     expect(err.code).toBe('wallet_bad_request');
     expect(err.walletErrorMessage).toBeUndefined();
   });
 
-  it('rejected з шифротекстом, який не розшифровується, -> wallet_bad_request', async () => {
+  it('rejected с шифротекстом, который не расшифровывается, -> wallet_bad_request', async () => {
     const session = await connected(() => ({
       status: 'rejected',
       encryptedResult: { iv: '00'.repeat(12), ciphertext: 'ab'.repeat(32) },
@@ -371,8 +371,8 @@ describe('відмови гаманця (encryptedResult у rejected)', () => {
   });
 });
 
-describe('джитер і нарощування інтервалу', () => {
-  it('джитер тримається в межах ±20%', () => {
+describe('джиттер и наращивание интервала', () => {
+  it('джиттер держится в пределах ±20%', () => {
     expect(applyJitter(1000, () => 0)).toBe(800);
     expect(applyJitter(1000, () => 1)).toBe(1200);
     expect(applyJitter(1000, () => 0.5)).toBe(1000);
@@ -383,7 +383,7 @@ describe('джитер і нарощування інтервалу', () => {
     }
   });
 
-  it('інтервал росте до стелі', () => {
+  it('интервал растёт до потолка', () => {
     expect(growInterval(2000, 10_000)).toBe(3000);
     expect(growInterval(9000, 10_000)).toBe(10_000);
     expect(growInterval(10_000, 10_000)).toBe(10_000);
