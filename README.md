@@ -570,6 +570,36 @@ Relay і гаманець самі завантажують manifest з `PUBLIC_
 `cloudflared tunnel --url http://localhost:8787`. `MINTER_NODE_URL` потрібен
 лише для кнопки «Відправити».
 
+### Увесь стек одною командою
+
+`npm run dev:stack` піднімає все для живого тесту з гаманцем у Telegram:
+Postgres і Redis (`docker compose` бекенду), міграції, публічні https-адреси,
+relay, Mini App гаманця і демо. Сусідні чекаути шукаються в
+`../minterWallet/minter-backend` і `../minterWallet/minter-wallet-miniapp`.
+
+```bash
+WALLET_APP_LINK=https://t.me/<Bot>/<short> MINTER_NODE_URL=https://<node>/v2 npm run dev:stack
+```
+
+Що робить скрипт:
+
+- **Публічні адреси.** За замовчуванням це три quick-тунелі cloudflared. Якщо
+  вони не створюються (`api.trycloudflare.com` недоступний), передайте власні
+  https-адреси, які ведуть на порти 3000 / 5173 / 8787:
+  `RELAY_PUBLIC_URL`, `WALLET_PUBLIC_URL`, `DEMO_PUBLIC_URL`.
+- **Конфіг relay.** `.env` бекенду не змінюється: потрібні значення
+  (`PORT`, `WALLET_MINI_APP_URL` = адреса гаманця, `SESSION_TTL_MS` = 7 днів)
+  передаються змінними оточення.
+- **Конфіг гаманця.** У `.env.local` гаманця записується лише рядок
+  `VITE_RELAY_URL`, решта файлу не чіпається.
+- **Що лишається вам.** Наприкінці скрипт друкує адресу гаманця. Її треба
+  вписати в BotFather (`/myapps` → Edit Web App URL). Адреси quick-тунелів нові
+  при кожному запуску.
+- **Опції.** `WITH_WORKER=1` запускає ще й worker. `SKIP_DB=1` — якщо Postgres і
+  Redis уже підняті вами. Логи пишуться в `.dev-stack/`.
+- **Зупинка.** Ctrl+C зупиняє все, що запустив скрипт. Контейнери БД
+  лишаються, їх зупиняє `docker compose down` у бекенді.
+
 ## Розробка
 
 ```bash

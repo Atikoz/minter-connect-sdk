@@ -46,7 +46,8 @@
     "test:e2e": "tsx test/e2e-manual.ts",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
     "fixtures:relay": "tsx test/fixtures/generate-relay-vectors.ts",
-    "demo": "tsx demo/server.ts"
+    "demo": "tsx demo/server.ts",
+    "dev:stack": "bash scripts/dev-stack.sh"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
