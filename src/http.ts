@@ -13,6 +13,13 @@ import { MinterConnectError, type MinterConnectErrorCode } from './types.js';
 /** Таймаут на ОДИН запит. Не плутати з timeoutMs циклів очікування. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * Пауза для `rate_limited`, коли relay не дав Retry-After. Так буває з лімітами
+ * сесії (`too_many_pending_requests`, `session_rate_limited`): їх рахує сам
+ * маршрут, а не плагін rate-limit, тож заголовка немає.
+ */
+export const DEFAULT_RETRY_AFTER_MS = 5_000;
+
 export interface RelayRequestOptions {
   method?: 'GET' | 'POST' | 'PUT';
   body?: unknown;
@@ -22,6 +29,8 @@ export interface RelayRequestOptions {
   timeoutMs?: number;
   /** Наскрізний X-Request-Id: relay використає його як traceId у своїх логах і у вебхуку. */
   requestId?: string;
+  /** dexToken сесії: іде як `Authorization: Bearer <token>` на маршрути DEX. */
+  authToken?: string;
 }
 
 /**
@@ -39,11 +48,19 @@ const RELAY_ERROR_CODES: Record<string, MinterConnectErrorCode> = {
   session_not_pending: 'already_finalized',
   already_finalized: 'already_finalized',
   invalid_callback_url: 'invalid_request',
+  missing_dex_token: 'unauthorized',
+  invalid_dex_token: 'unauthorized',
+  invalid_manifest_url: 'invalid_manifest',
+  manifest_unreachable: 'invalid_manifest',
+  manifest_invalid: 'invalid_manifest',
+  manifest_domain_mismatch: 'invalid_manifest',
   rate_limited: 'rate_limited',
+  too_many_pending_requests: 'rate_limited',
+  session_rate_limited: 'rate_limited',
 };
 
 export async function relayFetch<T>(url: string, options: RelayRequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, requestId } = options;
+  const { method = 'GET', body, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, requestId, authToken } = options;
 
   // Таймаут вішається на КОЖЕН запит. Без цього зависле TCP-з'єднання тримає
   // await нескінченно, і заявлений timeoutMs циклу поллінгу не спрацьовує —
@@ -58,6 +75,7 @@ export async function relayFetch<T>(url: string, options: RelayRequestOptions = 
   const headers: Record<string, string> = { accept: 'application/json' };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (requestId) headers['x-request-id'] = requestId;
+  if (authToken) headers.authorization = `Bearer ${authToken}`;
 
   let res: Response;
   try {
@@ -92,7 +110,8 @@ export async function relayFetch<T>(url: string, options: RelayRequestOptions = 
 async function toMinterConnectError(res: Response, url: string): Promise<MinterConnectError> {
   const { error, message } = await readErrorBody(res);
   const code = RELAY_ERROR_CODES[error ?? ''] ?? codeFromStatus(res.status);
-  const retryAfterMs = code === 'rate_limited' ? parseRetryAfter(res.headers.get('retry-after')) : undefined;
+  const retryAfterMs =
+    code === 'rate_limited' ? (parseRetryAfter(res.headers.get('retry-after')) ?? DEFAULT_RETRY_AFTER_MS) : undefined;
 
   const parts = [`Relay responded ${res.status}`, error, message].filter(Boolean);
   return new MinterConnectError(code, `${parts.join(' ')} (${url})`, {
@@ -108,11 +127,16 @@ async function toMinterConnectError(res: Response, url: string): Promise<MinterC
  */
 function codeFromStatus(status: number): MinterConnectErrorCode {
   if (status === 400) return 'invalid_request';
+  // 401/403 на маршрутах DEX — це завжди dexToken. Повтор з тим самим токеном
+  // дасть те саме, тому НЕ relay_error (той вважається тимчасовим).
+  if (status === 401 || status === 403) return 'unauthorized';
   if (status === 409) return 'already_finalized';
   // Будь-який 410 означає "цього більше немає, перепідключайся" — і це
   // важливіше за точну причину, тому дефолт саме session_expired, а не
   // загальний relay_error, який виглядав би як тимчасовий збій.
   if (status === 410) return 'session_expired';
+  // 422 relay віддає лише на manifest: це конфіг сайту, а не збій relay.
+  if (status === 422) return 'invalid_manifest';
   if (status === 429) return 'rate_limited';
   return 'relay_error';
 }

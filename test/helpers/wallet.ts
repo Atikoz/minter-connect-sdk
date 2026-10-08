@@ -71,9 +71,21 @@ export function canonicalRevokeMessage(sessionId: string, issuedAt: number): str
   return `minter-connect:revoke-session:${sessionId}:${issuedAt}`;
 }
 
-/** Канонічне повідомлення handshake relay: підпис покриває і ECDH-ключ каналу. */
-export function canonicalHandshakeMessage(sessionId: string, ecdhPublicKeyHex: string): string {
-  return `minter-connect:handshake:${sessionId}:${ecdhPublicKeyHex.toLowerCase()}`;
+/** Домен тестового сайту: host із TEST_MANIFEST_URL. */
+export const TEST_DOMAIN = 'dex.test';
+export const TEST_MANIFEST_URL = `https://${TEST_DOMAIN}/minter-connect-manifest.json`;
+export const TEST_WALLET_APP_LINK = 'https://t.me/MinterWalletBot/app';
+/** Формат dexToken relay: 32 байти base64url = 43 символи. */
+export const TEST_DEX_TOKEN = 'dexTokenForTests_0123456789abcdefghijklmnop';
+
+/** Канонічне повідомлення handshake relay: підпис покриває ECDH-ключ каналу, домен і час. */
+export function canonicalHandshakeMessage(
+  sessionId: string,
+  ecdhPublicKeyHex: string,
+  domain: string = TEST_DOMAIN,
+  issuedAt: number = Date.now(),
+): string {
+  return `minter-connect:handshake:${sessionId}:${ecdhPublicKeyHex.toLowerCase()}:${domain.trim().toLowerCase()}:${issuedAt}`;
 }
 
 /**
@@ -83,19 +95,36 @@ export function canonicalHandshakeMessage(sessionId: string, ecdhPublicKeyHex: s
 export function connectedSessionPayload(
   wallet: SimulatedWallet,
   sessionId: string,
-  extra: { dexPublicKeyHex?: string; expiresAt?: string | null } = {},
+  extra: { dexPublicKeyHex?: string; expiresAt?: string | null; domain?: string; issuedAt?: number } = {},
 ): Record<string, unknown> {
+  const domain = extra.domain ?? TEST_DOMAIN;
+  const issuedAt = extra.issuedAt ?? Date.now();
   return {
     status: 'connected',
     dexName: 'Test DEX',
+    dexDomain: domain,
+    dexIconUrl: `https://${domain}/icon.png`,
+    manifestUrl: `https://${domain}/minter-connect-manifest.json`,
     dexPublicKeyHex: extra.dexPublicKeyHex ?? 'ab'.repeat(33),
     walletAddress: wallet.address,
     walletPublicKeyHex: wallet.ecdh.publicKeyHex,
     identityPublicKeyHex: wallet.identity.publicKeyHex,
     handshakeSignature: signMessage(
       wallet.identity.secretKey,
-      canonicalHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex),
+      canonicalHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex, domain, issuedAt),
     ),
+    handshakeIssuedAt: issuedAt,
     expiresAt: extra.expiresAt ?? null,
   };
 }
+
+/** Те, що relay віддає на POST /sessions. */
+export function createdSessionReply(sessionId: string, expiresAt: string | null = null): Record<string, unknown> {
+  return { sessionId, dexToken: TEST_DEX_TOKEN, dexName: 'Test DEX', dexDomain: TEST_DOMAIN, expiresAt };
+}
+
+/** Конфіг клієнта, під який зібрані всі стаби. */
+export const TEST_CLIENT_CONFIG = {
+  manifestUrl: TEST_MANIFEST_URL,
+  walletAppLink: TEST_WALLET_APP_LINK,
+} as const;

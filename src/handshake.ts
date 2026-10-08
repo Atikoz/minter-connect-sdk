@@ -8,10 +8,16 @@
  * транзакції, і жодна перевірка адреси цього не помічає.
  *
  * Relay зберігає доказ (identity-ключ + підпис гаманця) і віддає його в
- * GET /sessions/:sessionId саме для цієї перевірки. Перевіряємо два зв'язки:
- *   1) identityPublicKeyHex розгортається РІВНО в заявлену walletAddress;
- *   2) підпис валідний для канонічного повідомлення, у яке входить
- *      ecdhPublicKeyHex — тож підмінений ключ каналу робить підпис невалідним.
+ * GET /sessions/:sessionId саме для цієї перевірки. Перевіряємо:
+ *   1) підписаний домен — НАШ (з конфігу, не з відповіді relay);
+ *   2) підпис не протух і не "з майбутнього";
+ *   3) identityPublicKeyHex розгортається РІВНО в заявлену walletAddress;
+ *   4) підпис валідний для канонічного повідомлення, у яке входять
+ *      ecdhPublicKeyHex і домен — тож підмінений ключ каналу робить підпис
+ *      невалідним.
+ *
+ * Логіка — копія verifyHandshake із minter-backend/src/shared/handshake.ts.
+ * Розходження ловить test/relay-compat.test.ts (фіксовані вектори з бекенду).
  */
 
 import * as secp from '@noble/secp256k1';
@@ -24,30 +30,72 @@ export interface HandshakeClaim {
   identityPublicKeyHex: string;
   /** ECDH-ключ каналу — той самий walletPublicKeyHex, який віддав relay. */
   ecdhPublicKeyHex: string;
+  /** Домен, який гаманець ПІДПИСАВ (host з manifest.url). З відповіді relay — тож лише заявка. */
+  domain: string;
+  /** Unix-час підпису в мілісекундах. */
+  issuedAt: number;
   signature: string;
 }
 
-export type HandshakeFailure = 'address_mismatch' | 'invalid_signature';
+export interface HandshakeExpectations {
+  /** ВЛАСНИЙ домен сайту з конфігу. Ніколи не значення з відповіді relay. */
+  expectedDomain: string;
+  /**
+   * Наскільки старим може бути підпис на момент перевірки. `Infinity` —
+   * свіжість не перевіряється (відновлення сесії, якій може бути до 7 днів);
+   * підпис "з майбутнього" понад розбіг годинників відхиляється завжди.
+   */
+  maxAgeMs: number;
+  now?: number;
+}
+
+export type HandshakeFailure = 'domain_mismatch' | 'stale_proof' | 'address_mismatch' | 'invalid_signature';
+
+/** Допустимий розбіг годинників гаманця і сайту — те саме PROOF_MAX_AGE_MS, що в relay. */
+export const PROOF_MAX_CLOCK_SKEW_MS = 120_000;
 
 const MINTER_ADDRESS_RE = /^Mx[0-9a-fA-F]{40}$/;
 
 /**
- * Канонічне повідомлення relay. Hex — завжди в нижньому регістрі: схеми relay
- * приймають будь-який регістр, тож без нормалізації підпис не збігся б з
- * повідомленням, зібраним з того, що relay віддав.
+ * Домен у підписі — `URL.host`: нижній регістр, порт лише нестандартний.
+ * Нормалізація та сама, що в relay (`normalizeDomain`), інакше `App.Example`
+ * і `app.example` давали б різні рядки підпису.
  */
-export function handshakeMessage(sessionId: string, ecdhPublicKeyHex: string): string {
-  return `minter-connect:handshake:${sessionId}:${ecdhPublicKeyHex.toLowerCase()}`;
+export function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase();
 }
 
-export function verifyHandshake(claim: HandshakeClaim): HandshakeFailure | null {
+/**
+ * Канонічне повідомлення relay (`canonicalMessage.handshake`). Hex — завжди в
+ * нижньому регістрі: схеми relay приймають будь-який регістр, тож без
+ * нормалізації підпис не збігся б з повідомленням, зібраним з того, що relay
+ * віддав.
+ */
+export function handshakeMessage(sessionId: string, ecdhPublicKeyHex: string, domain: string, issuedAt: number): string {
+  return `minter-connect:handshake:${sessionId}:${ecdhPublicKeyHex.toLowerCase()}:${normalizeDomain(domain)}:${issuedAt}`;
+}
+
+/**
+ * Порядок перевірок — як у relay: домен, свіжість, адреса, підпис.
+ * Домен у підписі — аналог `ton_proof`: підпис, який гаманець дав
+ * фішинговому сайту, тут не пройде, бо expectedDomain інший.
+ */
+export function verifyHandshake(claim: HandshakeClaim, expect: HandshakeExpectations): HandshakeFailure | null {
+  if (normalizeDomain(claim.domain) !== normalizeDomain(expect.expectedDomain)) return 'domain_mismatch';
+
+  const now = expect.now ?? Date.now();
+  if (!Number.isSafeInteger(claim.issuedAt)) return 'stale_proof';
+  // Майбутнє — лише в межах розбігу годинників, інакше підпис "з запасом"
+  // жив би скільки завгодно.
+  if (now - claim.issuedAt > expect.maxAgeMs || claim.issuedAt - now > PROOF_MAX_CLOCK_SKEW_MS) return 'stale_proof';
+
   if (!publicKeyMatchesAddress(claim.identityPublicKeyHex, claim.walletAddress)) return 'address_mismatch';
 
   let valid = false;
   try {
     valid = verifySignature(
       claim.identityPublicKeyHex,
-      handshakeMessage(claim.sessionId, claim.ecdhPublicKeyHex),
+      handshakeMessage(claim.sessionId, claim.ecdhPublicKeyHex, claim.domain, claim.issuedAt),
       claim.signature,
     );
   } catch {

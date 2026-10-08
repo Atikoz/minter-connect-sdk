@@ -6,6 +6,7 @@ import {
   type EncryptedPayload,
 } from './crypto.js';
 import { verifyHandshake } from './handshake.js';
+import { buildSendTransactionRequest, walletRejectionError } from './transaction.js';
 import { relayFetch, DEFAULT_REQUEST_TIMEOUT_MS } from './http.js';
 import { applyJitter, growInterval, sleep } from './polling.js';
 import {
@@ -13,17 +14,20 @@ import {
   type ConnectionResult,
   type SerializedSession,
   type SessionStatus,
+  type SendTransactionParams,
   type SigningStatus,
-  type TxParams,
 } from './types.js';
 
 /** Те, що relay віддає в GET /sessions/:sessionId. */
 interface RelaySessionState {
   status: SessionStatus;
+  /** Домен, який гаманець підписав. Заявка relay — звіряється з НАШИМ доменом. */
+  dexDomain: string | null;
   walletAddress: string | null;
   walletPublicKeyHex: string | null;
   identityPublicKeyHex: string | null;
   handshakeSignature: string | null;
+  handshakeIssuedAt: number | null;
   expiresAt: string | null;
 }
 
@@ -32,6 +36,10 @@ export interface SessionDeps {
   sessionId: string;
   deepLink: string;
   ephemeralSecretKey: Uint8Array;
+  /** Bearer-токен сесії з POST /sessions. */
+  dexToken: string;
+  /** Власний домен сайту з конфігу клієнта. */
+  expectedDomain: string;
   /** ISO-8601 дедлайн pairing'у з POST /sessions. */
   expiresAt: string | null;
   requestTimeoutMs?: number;
@@ -57,7 +65,7 @@ export interface WaitForSignatureOptions {
   timeoutMs?: number;
 }
 
-export interface RequestSignatureOptions {
+export interface RequestTransactionOptions {
   /** X-Request-Id для наскрізного трасування relay -> воркер -> вебхук. */
   requestId?: string;
 }
@@ -81,6 +89,13 @@ const PAIRING_GRACE_MS = 10_000;
 
 /** Фолбек, якщо relay не повернув expiresAt на POST /sessions: його PAIRING_TTL_MS. */
 const FALLBACK_PAIRING_TTL_MS = 300_000;
+
+/**
+ * Вік підпису handshake, з яким його приймає waitForConnection(). Гаманець
+ * підписує в момент підтвердження, а pairing живе 5 хв — 10 хв дають запас на
+ * повільний поллінг, але не дають підсунути старий підпис.
+ */
+const CONNECT_PROOF_MAX_AGE_MS = 10 * 60_000;
 
 /** Скільки тримати expiresAt завершених запитів, перш ніж прибрати з мапи. */
 const REQUEST_EXPIRY_RETENTION_MS = 10 * 60_000;
@@ -106,6 +121,8 @@ export class MinterConnectSession {
 
   private readonly relayUrl: string;
   private readonly ephemeralSecretKey: Uint8Array;
+  private readonly dexToken: string;
+  private readonly expectedDomain: string;
   private readonly requestTimeoutMs: number;
   private readonly requireHandshakeProof: boolean;
   private readonly abortController = new AbortController();
@@ -118,6 +135,8 @@ export class MinterConnectSession {
     this.deepLink = deps.deepLink;
     this.relayUrl = deps.relayUrl;
     this.ephemeralSecretKey = deps.ephemeralSecretKey;
+    this.dexToken = deps.dexToken;
+    this.expectedDomain = deps.expectedDomain;
     this.expiresAt = deps.expiresAt;
     this.requestTimeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.requireHandshakeProof = deps.requireHandshakeProof ?? true;
@@ -139,14 +158,16 @@ export class MinterConnectSession {
    * serialize() перезавантаження сторінки вимагає нового пейрінгу, і цей TTL
    * обслуговує тільки сторону гаманця.
    *
-   * Повертає СЕКРЕТ (див. SerializedSession): зберігайте зашифрованим.
-   * Відновлення — через MinterConnectClient.restoreSession().
+   * Повертає ДВА СЕКРЕТИ (ephemeral-ключ і dexToken, див. SerializedSession):
+   * зберігайте лише на сервері або зашифрованими. Відновлення — через
+   * MinterConnectClient.restoreSession().
    */
   serialize(): SerializedSession {
     return {
-      v: 1,
+      v: 2,
       sessionId: this.sessionId,
       ephemeralSecretKeyHex: secretKeyToHex(this.ephemeralSecretKey),
+      dexToken: this.dexToken,
     };
   }
 
@@ -156,6 +177,10 @@ export class MinterConnectSession {
    * підключення, — тоді далі йде звичайний waitForConnection().
    *
    * Викликається з restoreSession(); окремо потрібен рідко.
+   *
+   * Свіжість підпису handshake тут НЕ перевіряється: сесію могли підтвердити
+   * до 7 днів тому, і з перевіркою "не старше 10 хв" відновлення падало б
+   * завжди. Домен, адреса і підпис перевіряються як завжди.
    */
   async resume(): Promise<ConnectionResult | null> {
     this.assertOpen();
@@ -178,7 +203,7 @@ export class MinterConnectSession {
       );
     }
 
-    return this.adoptConnectedState(session);
+    return this.adoptConnectedState(session, Number.POSITIVE_INFINITY);
   }
 
   /**
@@ -203,6 +228,10 @@ export class MinterConnectSession {
     const { intervalMs = 2000, maxIntervalMs = 10_000 } = options;
     const timeoutMs = options.timeoutMs ?? this.defaultPairingTimeoutMs();
     this.assertOpen();
+
+    // Відновлена сесія вже перевірена в resume(). Повторна перевірка тут
+    // ішла б із вікном 10 хв і відкидала б handshake, підписаний учора.
+    if (this.isConnected) return this.connectionResult();
 
     const deadline = Date.now() + timeoutMs;
     let interval = intervalMs;
@@ -231,7 +260,7 @@ export class MinterConnectSession {
         );
       }
 
-      const connected = await this.adoptConnectedState(session);
+      const connected = await this.adoptConnectedState(session, CONNECT_PROOF_MAX_AGE_MS);
       if (connected) return connected;
 
       await this.sleepUntil(interval, deadline);
@@ -242,22 +271,32 @@ export class MinterConnectSession {
   }
 
   /**
-   * Надсилає unsigned tx на підпис і чекає результат. Це найпростіший спосіб
-   * використання SDK — для більшості інтеграторів іншого й не треба.
+   * Просить гаманець підписати переказ і чекає результат. Це найпростіший
+   * спосіб використання SDK — для більшості інтеграторів іншого й не треба.
+   *
+   * Повертає signedTxHex. У мережу його відправляє САЙТ (Gate/Node API,
+   * `send_transaction`): ні relay, ні гаманець транзакцію не транслюють.
    */
-  async sign(
-    txParams: TxParams,
-    options: WaitForSignatureOptions & RequestSignatureOptions = {},
+  async sendTransaction(
+    params: SendTransactionParams,
+    options: WaitForSignatureOptions & RequestTransactionOptions = {},
   ): Promise<string> {
-    const reqId = await this.requestSignature(txParams, options);
+    const reqId = await this.requestTransaction(params, options);
     return this.waitForSignature(reqId, options);
   }
 
-  /** Створює запит на підпис, повертає reqId одразу — для інтеграторів, яким треба надіслати кілька tx і чекати їх окремо/паралельно. */
-  async requestSignature(txParams: TxParams, options: RequestSignatureOptions = {}): Promise<string> {
+  /**
+   * Створює запит на підпис, повертає reqId одразу — для інтеграторів, яким
+   * треба надіслати кілька транзакцій і чекати їх окремо/паралельно.
+   *
+   * Некоректні params дають `invalid_request` ДО будь-якого запиту в мережу.
+   */
+  async requestTransaction(params: SendTransactionParams, options: RequestTransactionOptions = {}): Promise<string> {
+    this.assertOpen();
+    const request = buildSendTransactionRequest(params);
     this.assertConnected();
 
-    const encryptedPayload = await encryptPayload(this.aesKey!, txParams);
+    const encryptedPayload = await encryptPayload(this.aesKey!, request);
     const { reqId, expiresAt } = await this.post<{ reqId: string; status: SigningStatus; expiresAt: string }>(
       `${this.relayUrl}/sessions/${this.sessionId}/requests`,
       { encryptedPayload },
@@ -268,7 +307,11 @@ export class MinterConnectSession {
     return reqId;
   }
 
-  /** Чекає результат конкретного reqId, отриманого від requestSignature(). */
+  /**
+   * Чекає результат конкретного reqId, отриманого від requestTransaction().
+   * Повертає signedTxHex; відмова гаманця — `signing_rejected`,
+   * `wallet_bad_request` або `wallet_signing_failed`.
+   */
   async waitForSignature(reqId: string, options: WaitForSignatureOptions = {}): Promise<string> {
     this.assertConnected();
     const { pollIntervalMs = 2000, maxIntervalMs = 5000 } = options;
@@ -287,14 +330,11 @@ export class MinterConnectSession {
           deadline,
         );
 
-        if (result.status === 'signed' && result.encryptedResult) {
-          const { signedTxHex } = await decryptPayload<{ signedTxHex: string }>(this.aesKey!, result.encryptedResult);
-          return signedTxHex;
-        }
+        if (result.status === 'signed') return await this.readSignedResult(reqId, result.encryptedResult);
         if (result.status === 'rejected') {
-          // Relay також переводить pending-запити в 'rejected', коли гаманець
-          // відкликає сесію, — для DEX це той самий висновок: підпису не буде.
-          throw new MinterConnectError('signing_rejected', 'User rejected the signing request in their wallet');
+          // Relay також переводить pending-запити в 'rejected' без результату,
+          // коли гаманець відкликає сесію, — це теж wallet_bad_request.
+          throw walletRejectionError(reqId, await this.tryDecrypt(result.encryptedResult));
         }
         if (result.status === 'expired') {
           throw new MinterConnectError('signing_expired', 'Signing request expired before the wallet responded');
@@ -314,6 +354,34 @@ export class MinterConnectSession {
    * Внутрішнє
    * ------------------------------------------------------------------ */
 
+  private async readSignedResult(reqId: string, encryptedResult: EncryptedPayload | null): Promise<string> {
+    const result = await this.tryDecrypt(encryptedResult);
+    const signedTxHex = result && typeof result === 'object' ? (result as { signedTxHex?: unknown }).signedTxHex : undefined;
+    if (typeof signedTxHex !== 'string' || !/^(0x)?[0-9a-fA-F]+$/.test(signedTxHex)) {
+      throw new MinterConnectError(
+        'relay_error',
+        `Request ${reqId} is 'signed', but the result is missing or unreadable (no valid signedTxHex)`,
+      );
+    }
+    return signedTxHex;
+  }
+
+  /** `undefined` — результату немає або він не розшифровується цим ключем. */
+  private async tryDecrypt(encrypted: EncryptedPayload | null | undefined): Promise<unknown> {
+    if (!encrypted) return undefined;
+    try {
+      return await decryptPayload<unknown>(this.aesKey!, encrypted);
+    } catch (err) {
+      // Відсутній Web Crypto — проблема середовища, а не результату.
+      if (err instanceof MinterConnectError) throw err;
+      return undefined;
+    }
+  }
+
+  private connectionResult(): ConnectionResult {
+    return { walletAddress: this.walletAddress!, handshakeVerified: this.handshakeVerified, expiresAt: this.expiresAt };
+  }
+
   private fetchSessionState(): Promise<RelaySessionState> {
     return this.get<RelaySessionState>(`${this.relayUrl}/sessions/${this.sessionId}`);
   }
@@ -326,20 +394,18 @@ export class MinterConnectSession {
    * персистентність нічого не послаблює: збереженого `handshakeVerified` не
    * існує, є лише свіжий підпис гаманця, перевірений заново.
    */
-  private async adoptConnectedState(session: RelaySessionState): Promise<ConnectionResult | null> {
+  private async adoptConnectedState(
+    session: RelaySessionState,
+    maxProofAgeMs: number,
+  ): Promise<ConnectionResult | null> {
     if (session.status !== 'connected' || !session.walletAddress || !session.walletPublicKeyHex) return null;
 
-    const handshakeVerified = this.checkHandshake(
-      session.walletAddress,
-      session.walletPublicKeyHex,
-      session.identityPublicKeyHex,
-      session.handshakeSignature,
-    );
+    const handshakeVerified = this.checkHandshake(session, session.walletAddress, session.walletPublicKeyHex, maxProofAgeMs);
 
     this.walletAddress = session.walletAddress;
     this.handshakeVerified = handshakeVerified;
     this.aesKey = await deriveSharedAesKey(this.ephemeralSecretKey, session.walletPublicKeyHex);
-    return { walletAddress: session.walletAddress, handshakeVerified, expiresAt: this.expiresAt };
+    return this.connectionResult();
   }
 
   /**
@@ -362,11 +428,12 @@ export class MinterConnectSession {
    * одразу і НЕ позначаємо помилку як таку, що лікується перепідключенням.
    */
   private checkHandshake(
+    session: RelaySessionState,
     walletAddress: string,
     ecdhPublicKeyHex: string,
-    identityPublicKeyHex: string | null,
-    handshakeSignature: string | null,
+    maxAgeMs: number,
   ): boolean {
+    const { identityPublicKeyHex, handshakeSignature } = session;
     if (!identityPublicKeyHex || !handshakeSignature) {
       if (this.requireHandshakeProof) {
         throw new MinterConnectError(
@@ -379,18 +446,28 @@ export class MinterConnectSession {
       return false;
     }
 
-    const failure = verifyHandshake({
-      sessionId: this.sessionId,
-      walletAddress,
-      identityPublicKeyHex,
-      ecdhPublicKeyHex,
-      signature: handshakeSignature,
-    });
+    const failure = verifyHandshake(
+      {
+        sessionId: this.sessionId,
+        walletAddress,
+        identityPublicKeyHex,
+        ecdhPublicKeyHex,
+        // Домен і час — те, що relay заявляє як підписане. Перевіряється
+        // підписом і порівнянням з НАШИМ expectedDomain, а не довірою.
+        domain: session.dexDomain ?? '',
+        issuedAt: session.handshakeIssuedAt ?? Number.NaN,
+        signature: handshakeSignature,
+      },
+      { expectedDomain: this.expectedDomain, maxAgeMs },
+    );
     if (failure) {
       throw new MinterConnectError(
         'handshake_invalid',
         `Handshake proof for session ${this.sessionId} failed verification (${failure}). ` +
-          'The relay may have tampered with the wallet address or the channel key — do not retry against it.',
+          (failure === 'domain_mismatch'
+            ? `The wallet signed for "${session.dexDomain ?? ''}", not for ${this.expectedDomain}. `
+            : '') +
+          'The relay may have tampered with the wallet address, the channel key or the domain — do not retry against it.',
         { relayError: failure },
       );
     }
@@ -462,7 +539,11 @@ export class MinterConnectSession {
   }
 
   private get<T>(url: string): Promise<T> {
-    return relayFetch<T>(url, { signal: this.abortController.signal, timeoutMs: this.requestTimeoutMs });
+    return relayFetch<T>(url, {
+      signal: this.abortController.signal,
+      timeoutMs: this.requestTimeoutMs,
+      authToken: this.dexToken,
+    });
   }
 
   private post<T>(url: string, body: unknown, requestId?: string): Promise<T> {
@@ -471,6 +552,7 @@ export class MinterConnectSession {
       body,
       signal: this.abortController.signal,
       timeoutMs: this.requestTimeoutMs,
+      authToken: this.dexToken,
       ...(requestId ? { requestId } : {}),
     });
   }

@@ -3,14 +3,14 @@ export {
   MinterConnectSession,
   type WaitForConnectionOptions,
   type WaitForSignatureOptions,
-  type RequestSignatureOptions,
+  type RequestTransactionOptions,
 } from './session.js';
 export { MinterConnectError } from './types.js';
 export type {
   MinterConnectConfig,
   MinterConnectErrorCode,
   MinterConnectErrorDetails,
-  TxParams,
+  SendTransactionParams,
   ConnectionResult,
   SerializedSession,
   SessionStatus,

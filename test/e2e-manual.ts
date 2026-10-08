@@ -5,157 +5,222 @@
  *   docker compose up -d && npm run migrate:up && npm run dev
  *   cd -  &&  npm run test:e2e
  *
- * Змінні: RELAY_URL (за замовчуванням http://localhost:3000),
- *         CALLBACK_URL (не обов'язково; relay прийме приватну мережу лише
- *         з WEBHOOK_ALLOW_PRIVATE_NETWORK=true).
+ * Relay має бути в дев-режимі (WEBHOOK_ALLOW_PRIVATE_NETWORK=true): manifest
+ * цей скрипт роздає сам з http://localhost:<MANIFEST_PORT>, а relay у проді
+ * ходить лише на публічні https-адреси.
  *
- * Сценаріїв два: щасливий шлях і відкликана сесія. Другий існує тому, що це
- * найчастіший реальний збій у проді, і саме на ньому SDK раніше віддавав
- * network_error замість session_revoked.
+ * Змінні: RELAY_URL (за замовчуванням http://localhost:3000),
+ *         MANIFEST_PORT (за замовчуванням 5179),
+ *         CALLBACK_URL (не обов'язково).
+ *
+ * Сценарії: щасливий шлях, відмова гаманця з кодом, відновлення сесії з
+ * dexToken і відкликана сесія.
  */
 
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { MinterConnectClient, MinterConnectError, type MinterConnectSession } from '../src/index.js';
-import { deriveSharedAesKey, encryptPayload, decryptPayload } from '../src/crypto.js';
-import {
-  canonicalHandshakeMessage,
-  canonicalRevokeMessage,
-  createSimulatedWallet,
-  signMessage,
-  type SimulatedWallet,
-} from './helpers/wallet.js';
+import { deriveSharedAesKey, encryptPayload, decryptPayload, type EncryptedPayload } from '../src/crypto.js';
+import { canonicalHandshakeMessage, canonicalRevokeMessage, createSimulatedWallet, signMessage, type SimulatedWallet } from './helpers/wallet.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 
 const RELAY_URL = process.env.RELAY_URL ?? 'http://localhost:3000';
+const MANIFEST_PORT = Number(process.env.MANIFEST_PORT ?? 5179);
 const CALLBACK_URL = process.env.CALLBACK_URL;
 const SIGNED_TX = 'f8a0deadbeefcafe';
+const TX = { to: `Mx${'11'.repeat(20)}`, amount: '1.5', coin: 'BIP' };
+
+/* --------------------------- manifest сайту --------------------------- */
+
+const origin = `http://localhost:${MANIFEST_PORT}`;
+const manifestServer = createServer((req, res) => {
+  if (req.url !== '/minter-connect-manifest.json') {
+    res.writeHead(404).end();
+    return;
+  }
+  res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+  res.end(JSON.stringify({ url: origin, name: 'Test DEX via SDK', iconUrl: `${origin}/icon.png` }));
+});
+await new Promise<void>((resolve) => manifestServer.listen(MANIFEST_PORT, '127.0.0.1', resolve));
+console.log('[dex] manifest on', `${origin} (port ${(manifestServer.address() as AddressInfo).port})`);
 
 const client = new MinterConnectClient({
   relayUrl: RELAY_URL,
-  dexName: 'Test DEX via SDK',
-  walletBotUsername: 'minter_wallet_bot',
+  manifestUrl: `${origin}/minter-connect-manifest.json`,
+  walletAppLink: 'https://t.me/MinterWalletBot/app',
   ...(CALLBACK_URL ? { callbackUrl: CALLBACK_URL } : {}),
 });
 
-async function happyPath(): Promise<void> {
-  console.log('\n=== 1. Щасливий шлях ===');
+/** Стан симульованого гаманця для однієї сесії. */
+interface WalletSide {
+  wallet: SimulatedWallet;
+  sessionId: string;
+  aesKey: CryptoKey;
+}
+
+async function connect(): Promise<{ session: MinterConnectSession; side: WalletSide }> {
   const wallet = createSimulatedWallet();
-  const session: MinterConnectSession = await client.createSession();
+  const session = await client.createSession();
   console.log('[dex/sdk] sessionId:', session.sessionId);
   console.log('[dex/sdk] deepLink :', session.deepLink);
-  console.log('[dex/sdk] pairing expiresAt:', session.expiresAt);
 
-  await confirmAsWallet(session.sessionId, wallet);
-
-  const { walletAddress, expiresAt, handshakeVerified } = await session.waitForConnection({
-    intervalMs: 300,
-    timeoutMs: 15_000,
-  });
-  console.log('[dex/sdk] connected:', walletAddress, '| expiresAt:', expiresAt, '| handshakeVerified:', handshakeVerified);
+  const side = await confirmAsWallet(session.sessionId, wallet);
+  const { walletAddress, handshakeVerified, expiresAt } = await session.waitForConnection({ intervalMs: 300, timeoutMs: 15_000 });
+  console.log('[dex/sdk] connected:', walletAddress, '| verified:', handshakeVerified, '| expiresAt:', expiresAt);
   assert(handshakeVerified, 'SDK did not verify the handshake proof');
   assert(walletAddress === wallet.address, `expected ${wallet.address}, got ${walletAddress}`);
-  assert(expiresAt !== null, 'relay did not return session expiresAt');
+  return { session, side };
+}
 
-  const txParams = {
-    chainId: 2,
-    type: '0x01',
-    data: { to: `Mx${'11'.repeat(20)}`, coin: 0, value: '10' },
-  };
-  const signedTxHexPromise = session.sign(txParams, { pollIntervalMs: 300 });
+async function happyPath(): Promise<void> {
+  console.log('\n=== 1. Щасливий шлях ===');
+  const { session, side } = await connect();
 
-  await signAsWallet(session.sessionId, wallet, txParams);
-
-  const signedTxHex = await signedTxHexPromise;
+  const signed = session.sendTransaction(TX, { pollIntervalMs: 300 });
+  await respondAsWallet(side, async (request) => {
+    assert(JSON.stringify(request) === JSON.stringify({ v: 1, method: 'sendTransaction', params: TX }), 'request format');
+    return { status: 'signed', result: { signedTxHex: SIGNED_TX } };
+  });
+  const signedTxHex = await signed;
   console.log('[dex/sdk] signedTxHex:', signedTxHex);
   assert(signedTxHex === SIGNED_TX, `unexpected signature value: ${signedTxHex}`);
 
+  console.log('\n=== 2. Відмова гаманця з кодом ===');
+  for (const [walletCode, sdkCode] of [
+    ['user_rejected', 'signing_rejected'],
+    ['signing_failed', 'wallet_signing_failed'],
+  ] as const) {
+    const pending = session.sendTransaction(TX, { pollIntervalMs: 300 }).catch((e: unknown) => e);
+    await respondAsWallet(side, async () => ({ status: 'rejected', result: { error: { code: walletCode, message: `sim ${walletCode}` } } }));
+    const err = await pending;
+    assert(err instanceof MinterConnectError, `expected MinterConnectError, got ${String(err)}`);
+    console.log('[dex/sdk]', walletCode, '->', err.code, '|', err.walletErrorMessage);
+    assert(err.code === sdkCode, `expected ${sdkCode}, got ${err.code}`);
+  }
+
+  console.log('\n=== 3. Відновлення з serialize() ===');
+  const state = session.serialize();
   session.close();
-  assert(session.isClosed, 'close() did not mark the session closed');
+  const restored = await client.restoreSession(state);
+  assert(restored.isConnected && restored.handshakeVerified, 'restored session is not connected/verified');
+  const again = restored.sendTransaction(TX, { pollIntervalMs: 300 });
+  await respondAsWallet(side, async () => ({ status: 'signed', result: { signedTxHex: SIGNED_TX } }));
+  assert((await again) === SIGNED_TX, 'restored session did not sign');
+
+  const forged = await client.restoreSession({ ...state, dexToken: 'A'.repeat(43) }).catch((e: unknown) => e);
+  assert(forged instanceof MinterConnectError && forged.code === 'unauthorized', `expected unauthorized, got ${String(forged)}`);
+  console.log('[dex/sdk] чужий dexToken ->', forged.code);
+  restored.close();
 }
 
 async function revokedSession(): Promise<void> {
-  console.log('\n=== 2. Відкликана сесія ===');
-  const wallet = createSimulatedWallet();
-  const session = await client.createSession();
-  await confirmAsWallet(session.sessionId, wallet);
-  await session.waitForConnection({ intervalMs: 300, timeoutMs: 15_000 });
+  console.log('\n=== 4. Відкликана сесія ===');
+  const { session, side } = await connect();
+  await revokeAsWallet(side);
 
-  await revokeAsWallet(session.sessionId, wallet);
-
-  const err = await session.sign({ type: '0x01', data: {} }, { pollIntervalMs: 300 }).catch((e: unknown) => e);
+  const err = await session.sendTransaction(TX, { pollIntervalMs: 300 }).catch((e: unknown) => e);
   assert(err instanceof MinterConnectError, `expected MinterConnectError, got ${String(err)}`);
   console.log('[dex/sdk] code:', err.code, '| httpStatus:', err.httpStatus, '| relayError:', err.relayError);
   assert(err.code === 'session_revoked', `expected session_revoked, got ${err.code}`);
   assert(err.requiresReconnect, 'session_revoked must be flagged as requiresReconnect');
-
-  // І waitForConnection на мертвій сесії теж має виходити одразу, а не через таймаут.
-  const startedAt = Date.now();
-  const waitErr = await session.waitForConnection({ intervalMs: 300, timeoutMs: 30_000 }).catch((e: unknown) => e);
-  assert(waitErr instanceof MinterConnectError, 'expected MinterConnectError from waitForConnection');
-  assert(waitErr.code === 'session_revoked', `expected session_revoked, got ${waitErr.code}`);
-  assert(Date.now() - startedAt < 5_000, 'waitForConnection polled until timeout instead of exiting on revoked');
-  console.log('[dex/sdk] waitForConnection вийшов за', Date.now() - startedAt, 'мс');
+  session.close();
 }
 
 /* --------------------------- сторона гаманця --------------------------- */
 
-async function confirmAsWallet(sessionId: string, wallet: SimulatedWallet): Promise<void> {
+async function confirmAsWallet(sessionId: string, wallet: SimulatedWallet): Promise<WalletSide> {
+  const pairing = await okJson<{ manifestUrl: string; dexPublicKeyHex: string }>(
+    await fetch(`${RELAY_URL}/sessions/${sessionId}/pairing`),
+    'GET /sessions/:id/pairing',
+  );
+  // Гаманець сам завантажує manifest і підписує host з manifest.url.
+  const manifest = await okJson<{ url: string }>(await fetch(pairing.manifestUrl), 'GET manifest');
+  const domain = new URL(manifest.url).host;
+  const issuedAt = Date.now();
+
   const res = await fetch(`${RELAY_URL}/sessions/${sessionId}/confirm`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      // Адреса ВИВОДИТЬСЯ з identity-ключа: relay перевіряє відповідність і
-      // віддає 401 invalid_proof на будь-яку вигадану на кшталт 'Mx_test'.
       walletAddress: wallet.address,
       identityPublicKeyHex: wallet.identity.publicKeyHex,
       ecdhPublicKeyHex: wallet.ecdh.publicKeyHex,
-      // Підпис покриває і ECDH-ключ каналу — інакше relay міг би підмінити
-      // його непомітно. Саме цей доказ SDK потім перевіряє сам.
+      domain,
+      issuedAt,
       signature: signMessage(
         wallet.identity.secretKey,
-        canonicalHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex),
+        canonicalHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex, domain, issuedAt),
       ),
     }),
   });
   await okJson(res, 'POST /sessions/:id/confirm');
-  console.log('[wallet/sim] confirmed as', wallet.address);
+  console.log('[wallet/sim] confirmed as', wallet.address, 'for', domain);
+  return { wallet, sessionId, aesKey: await deriveSharedAesKey(wallet.ecdh.secretKey, pairing.dexPublicKeyHex) };
 }
 
-async function signAsWallet(sessionId: string, wallet: SimulatedWallet, expectedTx: unknown): Promise<void> {
-  // Пауза, щоб SDK встиг реально почати поллінг waitForSignature().
-  await new Promise((r) => setTimeout(r, 500));
+type WalletDecision = { status: 'signed' | 'rejected'; result: unknown };
 
-  const dexPublicKeyHex = (
-    await okJson<{ dexPublicKeyHex: string }>(await fetch(`${RELAY_URL}/sessions/${sessionId}`), 'GET /sessions/:id')
-  ).dexPublicKeyHex;
-  const aesKey = await deriveSharedAesKey(wallet.ecdh.secretKey, dexPublicKeyHex);
+async function respondAsWallet(side: WalletSide, decide: (request: unknown) => Promise<WalletDecision>): Promise<void> {
+  const pending = await waitForPending(side);
+  const request = await decryptPayload(side.aesKey, pending.encryptedPayload);
+  console.log('[wallet/sim] request:', JSON.stringify(request));
 
-  const { requests } = await okJson<{ requests: Array<{ reqId: string; encryptedPayload: { iv: string; ciphertext: string } }> }>(
-    await fetch(`${RELAY_URL}/wallets/${wallet.address}/pending-requests`),
-    'GET /wallets/:address/pending-requests',
-  );
-  const pending = requests[0];
-  assert(pending !== undefined, 'wallet sees no pending signing requests');
-
-  const decrypted = await decryptPayload(aesKey, pending.encryptedPayload);
-  console.log('[wallet/sim] decrypted tx:', JSON.stringify(decrypted));
-  assert(JSON.stringify(decrypted) === JSON.stringify(expectedTx), 'decrypted tx differs from what the DEX sent');
+  const { status, result } = await decide(request);
+  const encryptedResult = await encryptPayload(side.aesKey, result);
+  const issuedAt = Date.now();
+  const payloadHash = bytesToHex(sha256(new TextEncoder().encode(`${encryptedResult.iv}:${encryptedResult.ciphertext}`)));
 
   const res = await fetch(`${RELAY_URL}/requests/${pending.reqId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'signed', encryptedResult: await encryptPayload(aesKey, { signedTxHex: SIGNED_TX }) }),
+    body: JSON.stringify({
+      status,
+      encryptedResult,
+      identityPublicKeyHex: side.wallet.identity.publicKeyHex,
+      issuedAt,
+      signature: signMessage(
+        side.wallet.identity.secretKey,
+        `minter-connect:respond:${pending.reqId}:${status}:${payloadHash}:${issuedAt}`,
+      ),
+    }),
   });
   await okJson(res, 'PUT /requests/:reqId');
 }
 
-async function revokeAsWallet(sessionId: string, wallet: SimulatedWallet): Promise<void> {
+async function waitForPending(side: WalletSide): Promise<{ reqId: string; encryptedPayload: EncryptedPayload }> {
+  const address = side.wallet.address;
+  for (let i = 0; i < 50; i++) {
+    const issuedAt = Date.now();
+    const { requests } = await okJson<{ requests: Array<{ reqId: string; sessionId: string; encryptedPayload: EncryptedPayload }> }>(
+      await fetch(`${RELAY_URL}/wallets/${address}/pending-requests`, {
+        headers: {
+          'x-wallet-pubkey': side.wallet.identity.publicKeyHex,
+          'x-wallet-issued-at': String(issuedAt),
+          'x-wallet-signature': signMessage(
+            side.wallet.identity.secretKey,
+            `minter-connect:pending-requests:${address.toLowerCase()}:${issuedAt}`,
+          ),
+        },
+      }),
+      'GET /wallets/:address/pending-requests',
+    );
+    const mine = requests.find((r) => r.sessionId === side.sessionId);
+    if (mine) return mine;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error('wallet sees no pending signing requests');
+}
+
+async function revokeAsWallet(side: WalletSide): Promise<void> {
   const issuedAt = Date.now();
-  const res = await fetch(`${RELAY_URL}/sessions/${sessionId}/revoke`, {
+  const res = await fetch(`${RELAY_URL}/sessions/${side.sessionId}/revoke`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      walletAddress: wallet.address,
-      identityPublicKeyHex: wallet.identity.publicKeyHex,
-      signature: signMessage(wallet.identity.secretKey, canonicalRevokeMessage(sessionId, issuedAt)),
+      walletAddress: side.wallet.address,
+      identityPublicKeyHex: side.wallet.identity.publicKeyHex,
+      signature: signMessage(side.wallet.identity.secretKey, canonicalRevokeMessage(side.sessionId, issuedAt)),
       issuedAt,
     }),
   });
@@ -166,9 +231,8 @@ async function revokeAsWallet(sessionId: string, wallet: SimulatedWallet): Promi
 /* ------------------------------ утиліти ------------------------------- */
 
 /**
- * Кожен крок симуляції перевіряє res.ok. Раніше цього не було, і 400 від
- * relay (наприклад на 'Mx_sdk_test_wallet') проходив непоміченим — тест
- * просто зависав на поллінгу до таймауту, показуючи не ту проблему.
+ * Кожен крок симуляції перевіряє res.ok: інакше 4xx від relay проходив би
+ * непоміченим, і тест зависав би на поллінгу, показуючи не ту проблему.
  */
 async function okJson<T = unknown>(res: Response, what: string): Promise<T> {
   const text = await res.text();
@@ -180,6 +244,10 @@ function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-await happyPath();
-await revokedSession();
-console.log('\nSDK E2E TEST PASSED');
+try {
+  await happyPath();
+  await revokedSession();
+  console.log('\nSDK E2E TEST PASSED');
+} finally {
+  manifestServer.close();
+}

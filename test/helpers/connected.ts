@@ -8,7 +8,13 @@ import { MinterConnectClient } from '../../src/client.js';
 import type { MinterConnectSession } from '../../src/session.js';
 import { deriveSharedAesKey } from '../../src/crypto.js';
 import { createFetchStub, FAKE_SESSION_ID, type StubCall, type StubHandler } from './fetch-stub.js';
-import { connectedSessionPayload, createSimulatedWallet, type SimulatedWallet } from './wallet.js';
+import {
+  connectedSessionPayload,
+  createdSessionReply,
+  createSimulatedWallet,
+  TEST_CLIENT_CONFIG,
+  type SimulatedWallet,
+} from './wallet.js';
 
 export const RELAY_URL = 'https://relay.test';
 
@@ -34,7 +40,7 @@ export async function connectSession(handler: StubHandler): Promise<ConnectedFix
     if (!connected) {
       if (call.method === 'POST' && call.url === `${RELAY_URL}/sessions`) {
         dexPublicKeyHex = (call.body as { dexPublicKeyHex: string }).dexPublicKeyHex;
-        return { json: { sessionId: FAKE_SESSION_ID, expiresAt: new Date(Date.now() + 300_000).toISOString() } };
+        return { json: createdSessionReply(FAKE_SESSION_ID, new Date(Date.now() + 300_000).toISOString()) };
       }
       if (call.method === 'GET' && call.url === `${RELAY_URL}/sessions/${FAKE_SESSION_ID}`) {
         connected = true;
@@ -46,11 +52,7 @@ export async function connectSession(handler: StubHandler): Promise<ConnectedFix
 
   vi.stubGlobal('fetch', stub.fetch);
 
-  const client = new MinterConnectClient({
-    relayUrl: RELAY_URL,
-    dexName: 'Test DEX',
-    walletBotUsername: 'minter_wallet_bot',
-  });
+  const client = new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG });
 
   const session = await client.createSession();
   await session.waitForConnection({ intervalMs: 1, timeoutMs: 2000 });
@@ -58,6 +60,9 @@ export async function connectSession(handler: StubHandler): Promise<ConnectedFix
   const walletAesKey = await deriveSharedAesKey(wallet.ecdh.secretKey, dexPublicKeyHex);
   return { session, wallet, walletAesKey, calls: stub.calls };
 }
+
+/** Валідні params sendTransaction. */
+export const VALID_TX = { to: `Mx${'11'.repeat(20)}`, amount: '1.5', coin: 'BIP' } as const;
 
 /** Стандартна відповідь relay на POST /sessions/:id/requests. */
 export function pendingRequestReply(reqId: string, ttlMs = 90_000) {

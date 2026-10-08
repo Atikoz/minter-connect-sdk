@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Minter Connect demo</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --text: #16181d; --muted: #667085; --accent: #2f6df6; --err: #c4320a; --ok: #067647; --border: #e4e7ec; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f1115; --card: #171a21; --text: #e6e8ec; --muted: #98a2b3; --accent: #6e9bff; --err: #ff8a65; --ok: #47cd89; --border: #2a2f3a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 520px; margin: 32px auto; padding: 0 16px; display: grid; gap: 16px; }
+    section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+    label { display: grid; gap: 4px; margin-bottom: 12px; color: var(--muted); font-size: 13px; }
+    input { font: inherit; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+    code, .mono { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
+    #qr { background: #fff; padding: 12px; width: fit-content; border-radius: 8px; margin: 12px 0; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .err { color: var(--err); } .ok { color: var(--ok); }
+    .warn { border-left: 3px solid var(--accent); padding-left: 10px; color: var(--muted); font-size: 13px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Minter Connect demo</h1>
+
+  <section id="connect">
+    <h2>1. Підключення</h2>
+    <div class="row">
+      <button id="btn-connect">Підключити гаманець</button>
+      <button id="btn-retry" class="secondary" hidden>Спробувати ще раз</button>
+    </div>
+    <div id="pairing" hidden>
+      <div id="qr"></div>
+      <p><a id="deeplink" target="_blank" rel="noopener">Відкрити гаманець</a> — або відскануйте QR телефоном.</p>
+      <p class="mono" id="pairing-status">Чекаємо підтвердження в гаманці…</p>
+    </div>
+  </section>
+
+  <section id="connected" hidden>
+    <h2>2. Підключена адреса</h2>
+    <p class="mono" id="address"></p>
+    <p class="warn">Сесію підтверджує той, хто першим відкрив посилання. Перевірте, що це ВАША адреса, перш ніж щось підписувати.</p>
+  </section>
+
+  <section id="tx" hidden>
+    <h2>3. Переказ</h2>
+    <form id="tx-form">
+      <label>Кому (Mx…) <input name="to" required pattern="Mx[0-9a-fA-F]{40}" placeholder="Mx…" /></label>
+      <label>Сума, в монетах <input name="amount" required value="0.01" /></label>
+      <label>Монета <input name="coin" required value="BIP" /></label>
+      <button type="submit" id="btn-sign">Підписати в гаманці</button>
+    </form>
+    <p class="mono" id="sign-status"></p>
+    <div id="signed" hidden>
+      <p>signedTxHex: <code id="signed-hex"></code></p>
+      <button id="btn-broadcast">Відправити в мережу</button>
+      <p class="mono" id="broadcast-status"></p>
+    </div>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let sessionId = null;
+  let signedTxHex = null;
+
+  async function api(path, body) {
+    const res = await fetch(path, body === undefined ? {} : {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw Object.assign(new Error(data.message || data.error), data);
+    return data;
+  }
+
+  function status(el, text, kind) {
+    el.textContent = text;
+    el.className = 'mono' + (kind ? ' ' + kind : '');
+  }
+
+  async function connect() {
+    $('btn-connect').disabled = true;
+    $('btn-retry').hidden = true;
+    try {
+      const s = await api('/api/connect', {});
+      sessionId = s.sessionId;
+      $('deeplink').href = s.deepLink;
+      $('qr').innerHTML = '';
+      new QRCode($('qr'), { text: s.deepLink, width: 200, height: 200 });
+      $('pairing').hidden = false;
+      $('btn-retry').hidden = false;
+      status($('pairing-status'), 'Чекаємо підтвердження в гаманці…');
+
+      const mine = sessionId;
+      const c = await api('/api/connection?sessionId=' + encodeURIComponent(mine));
+      if (mine !== sessionId) return; // юзер уже натиснув «Спробувати ще раз»
+      $('pairing').hidden = true;
+      $('btn-retry').hidden = true;
+      $('connected').hidden = false;
+      $('tx').hidden = false;
+      $('address').textContent = c.walletAddress + (c.handshakeVerified ? '  ✓ доказ перевірено' : '');
+    } catch (e) {
+      status($('pairing-status'), (e.error || 'error') + ': ' + e.message, 'err');
+    } finally {
+      $('btn-connect').disabled = false;
+    }
+  }
+
+  $('btn-connect').onclick = connect;
+  // Окремої «відмови» немає: нова спроба = нова сесія, стара сама протухне.
+  $('btn-retry').onclick = connect;
+
+  $('tx-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const form = new FormData(ev.target);
+    $('btn-sign').disabled = true;
+    $('signed').hidden = true;
+    status($('sign-status'), 'Запит надіслано — підтвердіть у гаманці…');
+    try {
+      const r = await api('/api/sign', {
+        sessionId, to: form.get('to'), amount: form.get('amount'), coin: form.get('coin'),
+      });
+      signedTxHex = r.signedTxHex;
+      $('signed-hex').textContent = signedTxHex;
+      $('signed').hidden = false;
+      status($('sign-status'), 'Підписано.', 'ok');
+    } catch (e) {
+      const extra = e.walletErrorMessage ? ' (гаманець: ' + e.walletErrorMessage + ')' : '';
+      status($('sign-status'), (e.error || 'error') + ': ' + e.message + extra, 'err');
+    } finally {
+      $('btn-sign').disabled = false;
+    }
+  };
+
+  $('btn-broadcast').onclick = async () => {
+    $('btn-broadcast').disabled = true;
+    try {
+      const r = await api('/api/broadcast', { signedTxHex });
+      status($('broadcast-status'), 'hash: ' + r.hash, 'ok');
+    } catch (e) {
+      status($('broadcast-status'), e.message, 'err');
+    } finally {
+      $('btn-broadcast').disabled = false;
+    }
+  };
+</script>
+</body>
+</html>

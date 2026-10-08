@@ -1,6 +1,6 @@
 {
   "name": "minter-connect-sdk",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Non-custodial SDK for connecting DEX apps to Minter wallets over a pairing relay: the user confirms and signs in their own wallet, your app never sees the private key.",
   "keywords": [
     "minter",
@@ -44,7 +44,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx test/e2e-manual.ts",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "fixtures:relay": "tsx test/fixtures/generate-relay-vectors.ts",
+    "demo": "tsx demo/server.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.4.0",

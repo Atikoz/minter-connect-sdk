@@ -1,0 +1,369 @@
+{
+  "generatedFrom": "minter-backend src/shared (crypto-utils.ts, address.ts, handshake.ts)",
+  "keys": {
+    "identity": {
+      "secretKeyHex": "22ce0b280e7e893d8a65ae41d5ad11bd0e2a49e780d1d6412a18d26eb8bb1615",
+      "publicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406"
+    },
+    "walletEcdh": {
+      "secretKeyHex": "c2e5240fbf38ce0a2bd57377185b096182668689be4f94daab88798de5dcea81",
+      "publicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907"
+    },
+    "dexEcdh": {
+      "secretKeyHex": "3316d17e65cf6de49259df6df325eff221b231e6dfd4b9ab181ee1cf0da46373",
+      "publicKeyHex": "03cf5c282205c58eaf22af5734032d80b0d64dfc60d22d31357133448d43c72f63"
+    },
+    "other": {
+      "secretKeyHex": "121cca1c5021174abdbc20226530b616078cd4670d27995a9328cd3961473269",
+      "publicKeyHex": "020aef05932c8aacb44478d86e2ad222431730b59cc874ac9c07e7020bb8cc900c"
+    }
+  },
+  "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+  "handshake": {
+    "input": {
+      "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+      "ecdhPublicKeyHex": "023F29BFF87CB4CFA0BFB4D1AF5320300483898CC6760C293022DF1F7B265C2907",
+      "domain": "Dex.Example",
+      "issuedAt": 1759800000000
+    },
+    "message": "minter-connect:handshake:3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42:023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907:dex.example:1759800000000",
+    "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1",
+    "proofMaxAgeMs": 120000
+  },
+  "verifyHandshake": [
+    {
+      "name": "valid",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": null
+    },
+    {
+      "name": "valid: domain case and whitespace",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": " DEX.Example ",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "Dex.EXAMPLE",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": null
+    },
+    {
+      "name": "valid: uppercase hex",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02A714500A370822306F8114AA4B1D411B50703DE16900D20F479686035EF86406",
+        "ecdhPublicKeyHex": "023F29BFF87CB4CFA0BFB4D1AF5320300483898CC6760C293022DF1F7B265C2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": null
+    },
+    {
+      "name": "valid: future within clock skew",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759799940000
+      },
+      "result": null
+    },
+    {
+      "name": "valid: no freshness (restore)",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 9007199254740991,
+        "now": 1760318400000
+      },
+      "result": null
+    },
+    {
+      "name": "foreign expected domain",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "phishing.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "domain_mismatch"
+    },
+    {
+      "name": "relay swapped signed domain",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "phishing.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "phishing.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "invalid_signature"
+    },
+    {
+      "name": "port is part of the domain",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example:8443",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "domain_mismatch"
+    },
+    {
+      "name": "too old",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800600001
+      },
+      "result": "stale_proof"
+    },
+    {
+      "name": "too far in the future",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759799879999
+      },
+      "result": "stale_proof"
+    },
+    {
+      "name": "issuedAt changed",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000001,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "invalid_signature"
+    },
+    {
+      "name": "address of another key",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx59f11ed7bf4b486955a8a285d0ba28610fab3f23",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "address_mismatch"
+    },
+    {
+      "name": "ecdh key swapped",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "03cf5c282205c58eaf22af5734032d80b0d64dfc60d22d31357133448d43c72f63",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "invalid_signature"
+    },
+    {
+      "name": "session id changed",
+      "claim": {
+        "sessionId": "00000000-0000-4000-8000-000000000000",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "70e7a49ab06b4f4e62a5a967c78b7a95c8f0c8135a807ceab7824c0665e8664e0fb6ed19c664fbb6d927d89b70ba84171db025454065dfdd29149301fcaf2ea1"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "invalid_signature"
+    },
+    {
+      "name": "signature not hex",
+      "claim": {
+        "sessionId": "3f2b6c1e-8d4a-4b7e-9c2f-1a5e7d9b0c42",
+        "walletAddress": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+        "identityPublicKeyHex": "02a714500a370822306f8114aa4b1d411b50703de16900d20f479686035ef86406",
+        "ecdhPublicKeyHex": "023f29bff87cb4cfa0bfb4d1af5320300483898cc6760c293022df1f7b265c2907",
+        "domain": "dex.example",
+        "issuedAt": 1759800000000,
+        "signature": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+      },
+      "expect": {
+        "expectedDomain": "dex.example",
+        "maxAgeMs": 600000,
+        "now": 1759800030000
+      },
+      "result": "invalid_signature"
+    }
+  ],
+  "e2e": {
+    "request": {
+      "plaintext": {
+        "v": 1,
+        "method": "sendTransaction",
+        "params": {
+          "to": "Mx15ad857787732ebb4b28ba778aed653030b8bf3b",
+          "amount": "1.5",
+          "coin": "BIP"
+        }
+      },
+      "encrypted": {
+        "iv": "4fadc386c96f496232ed7230",
+        "ciphertext": "e6825bd7398d5d4b0bccb2f5e7b1b68940e4571db040a2bdacd01ca2f27283666a9890727308791fe1d2b8852634edf66f9dda5c339a14495effb6434b6650f9cf7050e4c2cfb9018a41549e1b074191dfbe5a75529f7726da2fddad60e350e6c8eae5dd51ce57cc0f9e4e0fedde63a92ac3c9fa31a254d538ccf679012d42b701a1df41bba2726d8f5975"
+      }
+    },
+    "signed": {
+      "plaintext": {
+        "signedTxHex": "f8a00102030405"
+      },
+      "encrypted": {
+        "iv": "deba6f7684750e28887da898",
+        "ciphertext": "54674ae0180706ec9bcc979ec2f5e8ff79ddf7acdd5b8c81e9b73248f0cf1df07b8490ce02b439fefd3039d372c0af56"
+      }
+    },
+    "rejected": {
+      "user_rejected": {
+        "plaintext": {
+          "error": {
+            "code": "user_rejected",
+            "message": "fixture user_rejected"
+          }
+        },
+        "encrypted": {
+          "iv": "cc07b4bd952971412be5aa03",
+          "ciphertext": "60da6313bd12011bdcddce32bf86a192676c627bd672e98bc7bf22fd4c0321bb16d8bb69db43e4680b10bbff840071fd2900edcbef44039fec81ef665549c1afb5fdc46188d45317e97772ccb94cba4671509271"
+        }
+      },
+      "bad_request": {
+        "plaintext": {
+          "error": {
+            "code": "bad_request",
+            "message": "fixture bad_request"
+          }
+        },
+        "encrypted": {
+          "iv": "e94baa04b03191021aa10b2c",
+          "ciphertext": "cfb1a0888c71993ec92906d75c9be8efa430b5308645ca6ce397c2b50145708e3c6205a416bc994957ef76b695195ccff61166a85008abb16dbf8a4f1f65d3ce8b8f2ede0d6a6f0f6a6f48e36c155695"
+        }
+      },
+      "signing_failed": {
+        "plaintext": {
+          "error": {
+            "code": "signing_failed",
+            "message": "fixture signing_failed"
+          }
+        },
+        "encrypted": {
+          "iv": "c1c095e591ef644570845893",
+          "ciphertext": "91a1ec98bf993b17c2263bcce0cc81df4a9a616ef756da630a16c3e24ec0e8cba0331c5765e5e72f75d191187a0460bbdb365ea13b71a19560ac7248c35af53c511a12275b6a3dee9f52c1858f1d665fcd388aa8dd3e"
+        }
+      }
+    }
+  }
+}

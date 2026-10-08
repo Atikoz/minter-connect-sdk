@@ -6,11 +6,17 @@
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { MinterConnectClient, MinterConnectError } from '../src/index.js';
-import { decryptPayload } from '../src/crypto.js';
+import { decryptPayload, encryptPayload } from '../src/crypto.js';
 import { applyJitter, growInterval } from '../src/polling.js';
 import { createFetchStub, FAKE_REQ_ID, FAKE_SESSION_ID, type StubReply } from './helpers/fetch-stub.js';
-import { connectSession, pendingRequestReply, RELAY_URL } from './helpers/connected.js';
-import { connectedSessionPayload, createSimulatedWallet } from './helpers/wallet.js';
+import { connectSession, pendingRequestReply, RELAY_URL, VALID_TX } from './helpers/connected.js';
+import {
+  connectedSessionPayload,
+  createdSessionReply,
+  createSimulatedWallet,
+  TEST_CLIENT_CONFIG,
+  TEST_DEX_TOKEN,
+} from './helpers/wallet.js';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -22,8 +28,7 @@ function clientWith(reply: (index: number) => StubReply, config: Record<string, 
   vi.stubGlobal('fetch', stub.fetch);
   const client = new MinterConnectClient({
     relayUrl: RELAY_URL,
-    dexName: 'Test DEX',
-    walletBotUsername: 'minter_wallet_bot',
+    ...TEST_CLIENT_CONFIG,
     ...config,
   });
   return { client, stub };
@@ -44,7 +49,7 @@ const sessionReply = (status: string, extra: Record<string, unknown> = {}): Stub
 describe('waitForConnection: термінальні статуси', () => {
   it('revoked -> session_revoked одразу, а не connection_timeout через 2 хвилини', async () => {
     const { client, stub } = clientWith((i) =>
-      i === 0 ? { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } } : sessionReply('revoked'),
+      i === 0 ? { json: createdSessionReply(FAKE_SESSION_ID) } : sessionReply('revoked'),
     );
     const session = await client.createSession();
 
@@ -60,7 +65,7 @@ describe('waitForConnection: термінальні статуси', () => {
 
   it('expired -> session_expired одразу', async () => {
     const { client } = clientWith((i) =>
-      i === 0 ? { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } } : sessionReply('expired'),
+      i === 0 ? { json: createdSessionReply(FAKE_SESSION_ID) } : sessionReply('expired'),
     );
     const session = await client.createSession();
 
@@ -74,7 +79,7 @@ describe('waitForConnection: термінальні статуси', () => {
   it('pending поллиться далі й доходить до connected', async () => {
     const wallet = createSimulatedWallet();
     const { client, stub } = clientWith((i) => {
-      if (i === 0) return { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } };
+      if (i === 0) return { json: createdSessionReply(FAKE_SESSION_ID) };
       if (i < 3) return sessionReply('pending');
       return { json: connectedSessionPayload(wallet, FAKE_SESSION_ID, { expiresAt: '2030-01-01T00:00:00.000Z' }) };
     });
@@ -94,7 +99,7 @@ describe('rate limit у поллінгу', () => {
   it('429 не фатальний: SDK чекає Retry-After і продовжує', async () => {
     const wallet = createSimulatedWallet();
     const { client } = clientWith((i) => {
-      if (i === 0) return { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } };
+      if (i === 0) return { json: createdSessionReply(FAKE_SESSION_ID) };
       if (i === 1) return { status: 429, json: { error: 'rate_limited' }, headers: { 'retry-after': '0' } };
       return { json: connectedSessionPayload(wallet, FAKE_SESSION_ID) };
     });
@@ -107,7 +112,7 @@ describe('rate limit у поллінгу', () => {
   it('якщо Retry-After довший за бюджет очікування — віддає саме rate_limited', async () => {
     const { client } = clientWith((i) =>
       i === 0
-        ? { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } }
+        ? { json: createdSessionReply(FAKE_SESSION_ID) }
         : { status: 429, json: { error: 'rate_limited' }, headers: { 'retry-after': '300' } },
     );
     const session = await client.createSession();
@@ -140,7 +145,7 @@ describe('таймаут окремого запиту', () => {
     const wallet = createSimulatedWallet();
     const { client } = clientWith(
       (i) => {
-        if (i === 0) return { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } };
+        if (i === 0) return { json: createdSessionReply(FAKE_SESSION_ID) };
         if (i === 1) return { hang: true };
         return { json: connectedSessionPayload(wallet, FAKE_SESSION_ID) };
       },
@@ -161,7 +166,7 @@ describe('таймаут окремого запиту', () => {
 describe('close()', () => {
   it('перериває поллінг, що вже триває', async () => {
     const { client } = clientWith((i) =>
-      i === 0 ? { json: { sessionId: FAKE_SESSION_ID, expiresAt: null } } : sessionReply('pending'),
+      i === 0 ? { json: createdSessionReply(FAKE_SESSION_ID) } : sessionReply('pending'),
     );
     const session = await client.createSession();
 
@@ -175,7 +180,7 @@ describe('close()', () => {
   });
 
   it('ідемпотентний, а наступні виклики одразу дають session_closed', async () => {
-    const { client } = clientWith(() => ({ json: { sessionId: FAKE_SESSION_ID, expiresAt: null } }));
+    const { client } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     const session = await client.createSession();
 
     session.close();
@@ -188,7 +193,7 @@ describe('close()', () => {
 });
 
 describe('підпис', () => {
-  it('шифрує txParams так, що гаманець їх читає, і повертає signedTxHex', async () => {
+  it('шифрує рівно { v: 1, method, params }, шле dexToken і повертає signedTxHex', async () => {
     let captured: { iv: string; ciphertext: string } | undefined;
     const { session, walletAesKey, calls } = await connectSession(async (call) => {
       if (call.method === 'POST') {
@@ -196,41 +201,89 @@ describe('підпис', () => {
         return pendingRequestReply(FAKE_REQ_ID);
       }
       // Гаманець підписав: шифруємо відповідь СВОЇМ ключем.
-      const { encryptPayload } = await import('../src/crypto.js');
       const encryptedResult = await encryptPayload(walletAesKey, { signedTxHex: 'f8a0deadbeef' });
       return { json: { status: 'signed', encryptedResult } };
     });
 
-    const txParams = { type: '0x01', chainId: 2, data: { to: 'Mx' + '11'.repeat(20), coin: 0, value: '10' } };
-    const signedTxHex = await session.sign(txParams, { pollIntervalMs: 5 });
+    const signedTxHex = await session.sendTransaction(VALID_TX, { pollIntervalMs: 5 });
 
     expect(signedTxHex).toBe('f8a0deadbeef');
-    expect(await decryptPayload(walletAesKey, captured!)).toEqual(txParams);
+    expect(await decryptPayload(walletAesKey, captured!)).toEqual({ v: 1, method: 'sendTransaction', params: VALID_TX });
     expect(calls.some((c) => c.url === `${RELAY_URL}/sessions/${FAKE_SESSION_ID}/requests`)).toBe(true);
+
+    // Усі маршрути DEX після POST /sessions — з Bearer-токеном сесії.
+    const dexCalls = calls.filter((c) => c.url !== `${RELAY_URL}/sessions`);
+    expect(dexCalls.length).toBeGreaterThanOrEqual(3); // GET session, POST request, GET request
+    for (const c of dexCalls) expect(c.headers.authorization).toBe(`Bearer ${TEST_DEX_TOKEN}`);
+    // А POST /sessions — без нього: токена ще немає.
+    expect(calls.find((c) => c.url === `${RELAY_URL}/sessions`)!.headers.authorization).toBeUndefined();
   });
 
-  it('rejected -> signing_rejected, expired -> signing_expired', async () => {
-    const rejected = await connectSession((call) =>
-      call.method === 'POST' ? pendingRequestReply(FAKE_REQ_ID) : { json: { status: 'rejected', encryptedResult: null } },
-    );
-    await expect(rejected.session.sign({ type: '0x01', data: {} }, { pollIntervalMs: 5 })).rejects.toMatchObject({
-      code: 'signing_rejected',
-    });
-    vi.unstubAllGlobals();
-
+  it('expired -> signing_expired', async () => {
     const expired = await connectSession((call) =>
       call.method === 'POST' ? pendingRequestReply(FAKE_REQ_ID) : { json: { status: 'expired', encryptedResult: null } },
     );
-    await expect(expired.session.sign({ type: '0x01', data: {} }, { pollIntervalMs: 5 })).rejects.toMatchObject({
+    await expect(expired.session.sendTransaction(VALID_TX, { pollIntervalMs: 5 })).rejects.toMatchObject({
       code: 'signing_expired',
     });
   });
 
-  it('sign() до waitForConnection() -> session_not_connected', async () => {
-    const { client } = clientWith(() => ({ json: { sessionId: FAKE_SESSION_ID, expiresAt: null } }));
+  it('невалідні params -> invalid_request без жодного запиту в мережу', async () => {
+    const { session, calls } = await connectSession(() => pendingRequestReply(FAKE_REQ_ID));
+    const before = calls.length;
+
+    const bad: unknown[] = [
+      { ...VALID_TX, to: 'Mx1234' },
+      { ...VALID_TX, to: `0x${'11'.repeat(20)}` },
+      { ...VALID_TX, amount: 1.5 },
+      { ...VALID_TX, amount: '0' },
+      { ...VALID_TX, amount: '0.000' },
+      { ...VALID_TX, amount: '01' },
+      { ...VALID_TX, amount: '1e18' },
+      { ...VALID_TX, amount: '-1' },
+      { ...VALID_TX, amount: ' 1' },
+      { ...VALID_TX, amount: '1.' },
+      { ...VALID_TX, amount: `1.${'1'.repeat(19)}` },
+      { ...VALID_TX, coin: 'bip' },
+      { ...VALID_TX, coin: 'BI' },
+      { ...VALID_TX, coin: 'ABCDEFGHIJK' },
+      { ...VALID_TX, coin: 'BIP!' },
+      { to: VALID_TX.to, amount: VALID_TX.amount },
+      { ...VALID_TX, gasCoin: 'BIP' },
+      null,
+      [VALID_TX.to, VALID_TX.amount, VALID_TX.coin],
+    ];
+    for (const params of bad) {
+      const err = (await session.sendTransaction(params as never).catch((e: unknown) => e)) as MinterConnectError;
+      expect(err, JSON.stringify(params)).toBeInstanceOf(MinterConnectError);
+      expect(err.code, JSON.stringify(params)).toBe('invalid_request');
+    }
+    expect(calls.length).toBe(before);
+
+    // Межові, але валідні значення гаманець приймає — SDK теж.
+    for (const params of [
+      { ...VALID_TX, amount: '0.000000000000000001' },
+      { ...VALID_TX, amount: '100' },
+      { ...VALID_TX, coin: 'LP-123' },
+      { ...VALID_TX, to: `Mx${'AB'.repeat(20)}` },
+    ]) {
+      await expect(session.requestTransaction(params)).resolves.toBe(FAKE_REQ_ID);
+    }
+  });
+
+  it('невалідні params дають invalid_request навіть до підключення', async () => {
+    const { client, stub } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     const session = await client.createSession();
 
-    await expect(session.sign({ type: '0x01', data: {} })).rejects.toMatchObject({ code: 'session_not_connected' });
+    await expect(session.sendTransaction({ ...VALID_TX, coin: 'bip' })).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it('sign() до waitForConnection() -> session_not_connected', async () => {
+    const { client } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
+    const session = await client.createSession();
+
+    await expect(session.sendTransaction(VALID_TX)).rejects.toMatchObject({ code: 'session_not_connected' });
   });
 
   it('дефолтний таймаут переживає TTL запиту, а не здається одночасно з ним', async () => {
@@ -246,7 +299,7 @@ describe('підпис', () => {
     });
 
     const err = (await session
-      .sign({ type: '0x01', data: {} }, { pollIntervalMs: 50 })
+      .sendTransaction(VALID_TX, { pollIntervalMs: 50 })
       .catch((e: unknown) => e)) as MinterConnectError;
 
     expect(err.code).toBe('signing_expired');
@@ -264,10 +317,57 @@ describe('підпис', () => {
     );
 
     const err = (await session
-      .sign({ type: '0x01', data: {} }, { pollIntervalMs: 50 })
+      .sendTransaction(VALID_TX, { pollIntervalMs: 50 })
       .catch((e: unknown) => e)) as MinterConnectError;
 
     expect(err.code).toBe('signing_expired');
+  });
+});
+
+describe('відмови гаманця (encryptedResult у rejected)', () => {
+  /** Підключена сесія; `result` гаманець шифрує своїм ключем і кладе в encryptedResult. */
+  async function connected(reply: (encryptedResult: unknown) => unknown, result?: unknown) {
+    let encryptedResult: unknown = null;
+    const fixture = await connectSession((call) =>
+      call.method === 'POST' ? pendingRequestReply(FAKE_REQ_ID) : { json: reply(encryptedResult) },
+    );
+    if (result !== undefined) encryptedResult = await encryptPayload(fixture.walletAesKey, result);
+    return fixture.session;
+  }
+
+  const cases: Array<[string, MinterConnectError['code']]> = [
+    ['user_rejected', 'signing_rejected'],
+    ['bad_request', 'wallet_bad_request'],
+    ['signing_failed', 'wallet_signing_failed'],
+    ['something_new', 'wallet_bad_request'],
+  ];
+  for (const [walletCode, sdkCode] of cases) {
+    it(`${walletCode} -> ${sdkCode}, message гаманця в walletErrorMessage`, async () => {
+      const session = await connected(
+        (encryptedResult) => ({ status: 'rejected', encryptedResult }),
+        { error: { code: walletCode, message: `wallet says ${walletCode}` } },
+      );
+      const err = (await session.sendTransaction(VALID_TX, { pollIntervalMs: 5 }).catch((e: unknown) => e)) as MinterConnectError;
+      expect(err.code).toBe(sdkCode);
+      expect(err.walletErrorMessage).toBe(`wallet says ${walletCode}`);
+      expect(err.isRetryable).toBe(false);
+    });
+  }
+
+  it('rejected БЕЗ encryptedResult -> wallet_bad_request (так вимагає API.md)', async () => {
+    const session = await connected(() => ({ status: 'rejected', encryptedResult: null }));
+    const err = (await session.sendTransaction(VALID_TX, { pollIntervalMs: 5 }).catch((e: unknown) => e)) as MinterConnectError;
+    expect(err.code).toBe('wallet_bad_request');
+    expect(err.walletErrorMessage).toBeUndefined();
+  });
+
+  it('rejected з шифротекстом, який не розшифровується, -> wallet_bad_request', async () => {
+    const session = await connected(() => ({
+      status: 'rejected',
+      encryptedResult: { iv: '00'.repeat(12), ciphertext: 'ab'.repeat(32) },
+    }));
+    const err = (await session.sendTransaction(VALID_TX, { pollIntervalMs: 5 }).catch((e: unknown) => e)) as MinterConnectError;
+    expect(err.code).toBe('wallet_bad_request');
   });
 });
 

@@ -6,20 +6,31 @@
  * зміна KDF чи довжини IV в одній компілюється й проходить її власні тести —
  * а ламається тільки у продакшні, у вигляді "гаманець підписав неправильно".
  *
- * Тому тут формат перевіряється ДВІЧІ:
- *  1. незалежною реалізацією на node:crypto (нижче) — вона є завжди;
- *  2. справжніми примітивами relay, якщо сусідній чекаут на місці.
+ * Тому тут формат перевіряється ТРИЧІ:
+ *  1. незалежною реалізацією на node:crypto — вона є завжди;
+ *  2. фіксованими векторами з бекенду (test/fixtures/relay-vectors.json,
+ *     `npm run fixtures:relay`) — вони теж є завжди, зокрема в CI, де
+ *     сусіднього чекауту бекенду немає;
+ *  3. справжніми примітивами relay, якщо сусідній чекаут на місці.
  */
 
 import { createHash, createDecipheriv, createCipheriv } from 'node:crypto';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import * as secp from '@noble/secp256k1';
 import { describe, expect, it } from 'vitest';
 import { generateEphemeralKeyPair, deriveSharedAesKey, encryptPayload, decryptPayload } from '../src/crypto.js';
-import { handshakeMessage as sdkHandshakeMessage, verifyHandshake as sdkVerifyHandshake } from '../src/handshake.js';
+import {
+  handshakeMessage as sdkHandshakeMessage,
+  publicKeyToMinterAddress as sdkPublicKeyToMinterAddress,
+  verifyHandshake as sdkVerifyHandshake,
+  PROOF_MAX_CLOCK_SKEW_MS,
+  type HandshakeClaim,
+  type HandshakeExpectations,
+} from '../src/handshake.js';
+import { buildSendTransactionRequest, walletRejectionError } from '../src/transaction.js';
 import { createSimulatedWallet, publicKeyToMinterAddress, signMessage, verifyMessage } from './helpers/wallet.js';
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
@@ -54,7 +65,7 @@ describe('формат на дроті (незалежна реалізація)
     const wallet = generateEphemeralKeyPair();
 
     const sdkKey = await deriveSharedAesKey(dex.secretKey, wallet.publicKeyHex);
-    const payload = { type: '0x01', data: { to: `Mx${'ab'.repeat(20)}`, value: '1' } };
+    const payload = { v: 1, method: 'sendTransaction', params: { to: `Mx${'ab'.repeat(20)}`, amount: '1', coin: 'BIP' } };
     const encrypted = await encryptPayload(sdkKey, payload);
 
     expect(decryptIndependently(sharedAesKeyBytes(wallet.secretKey, dex.publicKeyHex), encrypted)).toEqual(payload);
@@ -82,8 +93,9 @@ describe('формат на дроті (незалежна реалізація)
     const a = generateEphemeralKeyPair();
     const b = generateEphemeralKeyPair();
     const { iv, ciphertext } = await encryptPayload(await deriveSharedAesKey(a.secretKey, b.publicKeyHex), {
-      type: '0x01',
-      data: {},
+      v: 1,
+      method: 'sendTransaction',
+      params: { to: `Mx${'ab'.repeat(20)}`, amount: '1', coin: 'BIP' },
     });
 
     expect(iv).toMatch(/^[0-9a-fA-F]{24}$/);
@@ -129,11 +141,87 @@ describe('формат ключа гаманця', () => {
   });
 });
 
-/* Другий рівень: справжні примітиви relay, якщо сусідній чекаут доступний. */
-const RELAY_CRYPTO = resolve(process.cwd(), '../minterWallet/minter-backend/src/shared/crypto-utils.ts');
-const RELAY_ADDRESS = resolve(process.cwd(), '../minterWallet/minter-backend/src/shared/address.ts');
-const RELAY_HANDSHAKE = resolve(process.cwd(), '../minterWallet/minter-backend/src/shared/handshake.ts');
-const relayAvailable = existsSync(RELAY_CRYPTO) && existsSync(RELAY_ADDRESS);
+/* Другий рівень: фіксовані вектори, згенеровані кодом бекенду. */
+interface Vectors {
+  keys: Record<'identity' | 'walletEcdh' | 'dexEcdh' | 'other', { secretKeyHex: string; publicKeyHex: string }>;
+  walletAddress: string;
+  handshake: {
+    input: { sessionId: string; ecdhPublicKeyHex: string; domain: string; issuedAt: number };
+    message: string;
+    signature: string;
+    proofMaxAgeMs: number;
+  };
+  verifyHandshake: Array<{ name: string; claim: HandshakeClaim; expect: HandshakeExpectations; result: string | null }>;
+  e2e: {
+    request: { plaintext: unknown; encrypted: { iv: string; ciphertext: string } };
+    signed: { plaintext: unknown; encrypted: { iv: string; ciphertext: string } };
+    rejected: Record<string, { plaintext: { error: { code: string; message: string } }; encrypted: { iv: string; ciphertext: string } }>;
+  };
+}
+const vectors = JSON.parse(readFileSync(new URL('./fixtures/relay-vectors.json', import.meta.url), 'utf8')) as Vectors;
+
+describe('вектори бекенду (test/fixtures/relay-vectors.json)', () => {
+  const sk = (hex: string) => secp.etc.hexToBytes(hex);
+
+  it('адреса з identity-ключа', () => {
+    expect(sdkPublicKeyToMinterAddress(vectors.keys.identity.publicKeyHex)).toBe(vectors.walletAddress);
+  });
+
+  it('рядок handshake збігається байт у байт', () => {
+    const { sessionId, ecdhPublicKeyHex, domain, issuedAt } = vectors.handshake.input;
+    expect(sdkHandshakeMessage(sessionId, ecdhPublicKeyHex, domain, issuedAt)).toBe(vectors.handshake.message);
+  });
+
+  it('підпис гаманця над рядком handshake перевіряється (і він детермінований)', () => {
+    expect(verifyMessage(vectors.keys.identity.publicKeyHex, vectors.handshake.message, vectors.handshake.signature)).toBe(true);
+    expect(signMessage(sk(vectors.keys.identity.secretKeyHex), vectors.handshake.message)).toBe(vectors.handshake.signature);
+  });
+
+  it('допуск на розбіг годинників той самий, що в relay', () => {
+    expect(PROOF_MAX_CLOCK_SKEW_MS).toBe(vectors.handshake.proofMaxAgeMs);
+  });
+
+  for (const v of vectors.verifyHandshake) {
+    it(`verifyHandshake: ${v.name} -> ${v.result ?? 'null'}`, () => {
+      expect(sdkVerifyHandshake(v.claim, v.expect)).toBe(v.result);
+    });
+  }
+
+  it('SDK читає шифротексти, зроблені бекендом на стороні гаманця', async () => {
+    const dexKey = await deriveSharedAesKey(sk(vectors.keys.dexEcdh.secretKeyHex), vectors.keys.walletEcdh.publicKeyHex);
+    expect(await decryptPayload(dexKey, vectors.e2e.request.encrypted)).toEqual(vectors.e2e.request.plaintext);
+    expect(await decryptPayload(dexKey, vectors.e2e.signed.encrypted)).toEqual(vectors.e2e.signed.plaintext);
+    for (const { plaintext, encrypted } of Object.values(vectors.e2e.rejected)) {
+      expect(await decryptPayload(dexKey, encrypted)).toEqual(plaintext);
+    }
+  });
+
+  it('запит SDK має рівно ту форму, що й вектор (включно з порядком полів)', () => {
+    const { params } = vectors.e2e.request.plaintext as { params: { to: string; amount: string; coin: string } };
+    expect(JSON.stringify(buildSendTransactionRequest(params))).toBe(JSON.stringify(vectors.e2e.request.plaintext));
+  });
+
+  it('коди відмов гаманця мапляться в коди SDK', () => {
+    const expected: Record<string, string> = {
+      user_rejected: 'signing_rejected',
+      bad_request: 'wallet_bad_request',
+      signing_failed: 'wallet_signing_failed',
+    };
+    expect(Object.keys(vectors.e2e.rejected).sort()).toEqual(Object.keys(expected).sort());
+    for (const [code, { plaintext }] of Object.entries(vectors.e2e.rejected)) {
+      const err = walletRejectionError('req', plaintext);
+      expect(err.code).toBe(expected[code]);
+      expect(err.walletErrorMessage).toBe(plaintext.error.message);
+    }
+  });
+});
+
+/* Третій рівень: справжні примітиви relay, якщо сусідній чекаут доступний. */
+const BACKEND_DIR = resolve(process.env.MINTER_BACKEND_DIR ?? resolve(process.cwd(), '../minterWallet/minter-backend'));
+const RELAY_CRYPTO = resolve(BACKEND_DIR, 'src/shared/crypto-utils.ts');
+const RELAY_ADDRESS = resolve(BACKEND_DIR, 'src/shared/address.ts');
+const RELAY_HANDSHAKE = resolve(BACKEND_DIR, 'src/shared/handshake.ts');
+const relayAvailable = existsSync(RELAY_CRYPTO) && existsSync(RELAY_ADDRESS) && existsSync(RELAY_HANDSHAKE);
 
 describe.skipIf(!relayAvailable)('сумісність із примітивами relay (сусідній чекаут)', () => {
   it('SDK -> relay і relay -> SDK', async () => {
@@ -147,7 +235,7 @@ describe.skipIf(!relayAvailable)('сумісність із примітивам
     const sdkKey = await deriveSharedAesKey(dex.secretKey, walletSide.publicKeyHex);
     const relayKey = await relay.deriveSharedAesKey(walletSide.secretKey, dex.publicKeyHex);
 
-    const payload = { type: '0x01', data: { to: `Mx${'cd'.repeat(20)}` } };
+    const payload = buildSendTransactionRequest({ to: `Mx${'cd'.repeat(20)}`, amount: '0.000000000000000001', coin: 'LP-123' });
     expect(await relay.decryptPayload(relayKey, await encryptPayload(sdkKey, payload))).toEqual(payload);
     expect(await decryptPayload(sdkKey, await relay.encryptPayload(relayKey, payload))).toEqual(payload);
   });
@@ -163,36 +251,43 @@ describe.skipIf(!relayAvailable)('сумісність із примітивам
     expect(relayAddress.publicKeyToMinterAddress(wallet.identity.publicKeyHex)).toBe(wallet.address);
   });
 
-  it.skipIf(!existsSync(RELAY_HANDSHAKE))(
-    'канонічне повідомлення handshake збігається байт у байт із relay',
-    async () => {
-      const relayHandshake = (await import(pathToFileURL(RELAY_HANDSHAKE).href)) as {
-        canonicalMessage: { handshake: (sessionId: string, ecdhPublicKeyHex: string) => string };
-        verifyHandshake: (claim: Record<string, string>) => string | null;
-      };
+  it('рядок і вердикти handshake збігаються з relay на випадкових ключах', async () => {
+    const relayHandshake = (await import(pathToFileURL(RELAY_HANDSHAKE).href)) as {
+      canonicalMessage: { handshake: (sessionId: string, ecdh: string, domain: string, issuedAt: number) => string };
+      verifyHandshake: (claim: HandshakeClaim, expect: HandshakeExpectations) => string | null;
+    };
 
-      const wallet = createSimulatedWallet();
-      const sessionId = '11111111-2222-4333-8444-555555555555';
+    const wallet = createSimulatedWallet();
+    const sessionId = '11111111-2222-4333-8444-555555555555';
+    const issuedAt = Date.now();
 
-      // Формат повідомлення — це і є контракт: розбіжність в одному символі
-      // дає невалідний підпис, який виглядає як "користувач підписав не те".
-      expect(sdkHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex)).toBe(
-        relayHandshake.canonicalMessage.handshake(sessionId, wallet.ecdh.publicKeyHex),
-      );
+    // Формат повідомлення — це і є контракт: розбіжність в одному символі
+    // дає невалідний підпис, який виглядає як "користувач підписав не те".
+    expect(sdkHandshakeMessage(sessionId, wallet.ecdh.publicKeyHex, 'Dex.Example:8443', issuedAt)).toBe(
+      relayHandshake.canonicalMessage.handshake(sessionId, wallet.ecdh.publicKeyHex, 'Dex.Example:8443', issuedAt),
+    );
 
-      // Доказ, зібраний як його збирає гаманець, приймають ОБИДВІ реалізації.
-      const claim = {
-        sessionId,
-        walletAddress: wallet.address,
-        identityPublicKeyHex: wallet.identity.publicKeyHex,
-        ecdhPublicKeyHex: wallet.ecdh.publicKeyHex,
-        signature: signMessage(
-          wallet.identity.secretKey,
-          relayHandshake.canonicalMessage.handshake(sessionId, wallet.ecdh.publicKeyHex),
-        ),
-      };
-      expect(relayHandshake.verifyHandshake(claim)).toBeNull();
-      expect(sdkVerifyHandshake(claim)).toBeNull();
-    },
-  );
+    // Доказ, зібраний як його збирає гаманець, обидві реалізації оцінюють однаково.
+    const claim: HandshakeClaim = {
+      sessionId,
+      walletAddress: wallet.address,
+      identityPublicKeyHex: wallet.identity.publicKeyHex,
+      ecdhPublicKeyHex: wallet.ecdh.publicKeyHex,
+      domain: 'dex.example',
+      issuedAt,
+      signature: signMessage(
+        wallet.identity.secretKey,
+        relayHandshake.canonicalMessage.handshake(sessionId, wallet.ecdh.publicKeyHex, 'dex.example', issuedAt),
+      ),
+    };
+    const expectations: HandshakeExpectations[] = [
+      { expectedDomain: 'dex.example', maxAgeMs: 600_000 },
+      { expectedDomain: 'evil.example', maxAgeMs: 600_000 },
+      { expectedDomain: 'dex.example', maxAgeMs: 600_000, now: issuedAt + 600_001 },
+    ];
+    for (const e of expectations) {
+      expect(sdkVerifyHandshake(claim, e)).toBe(relayHandshake.verifyHandshake(claim, e));
+    }
+    expect(sdkVerifyHandshake(claim, expectations[0]!)).toBeNull();
+  });
 });
