@@ -15,11 +15,11 @@
   "author": "VVG",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CHANGE_ME/minter-connect-sdk.git"
+    "url": "git+https://github.com/Atikoz/minter-connect-sdk.git"
   },
-  "homepage": "https://github.com/CHANGE_ME/minter-connect-sdk#readme",
+  "homepage": "https://github.com/Atikoz/minter-connect-sdk#readme",
   "bugs": {
-    "url": "https://github.com/CHANGE_ME/minter-connect-sdk/issues"
+    "url": "https://github.com/Atikoz/minter-connect-sdk/issues"
   },
   "type": "module",
   "exports": {
