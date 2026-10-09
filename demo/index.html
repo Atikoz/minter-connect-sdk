@@ -44,6 +44,7 @@
       <p><a id="deeplink" target="_blank" rel="noopener">Открыть кошелёк</a> — или отсканируйте QR телефоном.</p>
       <p class="mono" id="pairing-status">Ждём подтверждения в кошельке…</p>
     </div>
+    <p class="mono err" id="connect-error" hidden></p>
   </section>
 
   <section id="connected" hidden>
@@ -78,7 +79,16 @@
     const res = await fetch(path, body === undefined ? {} : {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     });
-    const data = await res.json();
+    // Страница открыта не через demo/server.ts (Live Server, file://, другой статический
+    // сервер): /api/* там нет, а ответ — пустой или HTML. Говорим, как запустить правильно.
+    const isJson = (res.headers.get('content-type') || '').includes('application/json');
+    const data = isJson ? await res.json().catch(() => null) : null;
+    if (!data) {
+      throw Object.assign(
+        new Error('Ответ ' + res.status + ' не от сервера демо. Запустите `npm run demo` в папке SDK и откройте http://localhost:8787'),
+        { error: 'demo_server_missing' },
+      );
+    }
     if (!res.ok) throw Object.assign(new Error(data.message || data.error), data);
     return data;
   }
@@ -91,6 +101,7 @@
   async function connect() {
     $('btn-connect').disabled = true;
     $('btn-retry').hidden = true;
+    $('connect-error').hidden = true;
     try {
       const s = await api('/api/connect', {});
       sessionId = s.sessionId;
@@ -110,7 +121,11 @@
       $('tx').hidden = false;
       $('address').textContent = c.walletAddress + (c.handshakeVerified ? '  ✓ доказательство проверено' : '');
     } catch (e) {
-      status($('pairing-status'), (e.error || 'error') + ': ' + e.message, 'err');
+      // Отдельный элемент, а не pairing-status: если упал первый же запрос,
+      // блок pairing ещё скрыт, и ошибку никто бы не увидел.
+      $('pairing').hidden = true;
+      $('connect-error').textContent = (e.error || 'error') + ': ' + e.message;
+      $('connect-error').hidden = false;
     } finally {
       $('btn-connect').disabled = false;
     }
