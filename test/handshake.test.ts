@@ -226,7 +226,8 @@ describe('waitForConnection проверяет доказательство', ()
     expect(err.code).toBe('handshake_unverifiable');
   });
 
-  it('requireHandshakeProof: false — подключается, но честно говорит, что не проверено', async () => {
+  it('requireHandshakeProof: false (устарела) — подключается, но честно говорит, что не проверено', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {}); // предупреждение об устаревании проверяется в deprecation.test.ts
     const wallet = createSimulatedWallet();
     const payload = connectedSessionPayload(wallet, FAKE_SESSION_ID);
     payload.identityPublicKeyHex = null;

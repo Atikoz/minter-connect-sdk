@@ -27,14 +27,14 @@ SDK для сайтов (DEX), чтобы подключаться к Minter-к�
 незаметно поменяет SDK у вас на сайте.
 
 ```bash
-npm install github:Atikoz/minter-connect-sdk#v2.0.0
+npm install github:Atikoz/minter-connect-sdk#v2.1.0
 ```
 
 Это работает по https и без SSH-ключа (репозиторий публичный), в том числе в
 CI. Если у вас настроен SSH-доступ к GitHub, то же самое через SSH:
 
 ```bash
-npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.0.0
+npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.1.0
 ```
 
 При установке npm сам собирает `dist/` (скрипт `prepare`), поэтому на
@@ -166,7 +166,7 @@ SDK гарантирует, что подключение настоящее: п
 | `domain` | `string` | нет | Собственный домен сайта для проверки handshake. По умолчанию host из `manifestUrl`; другое значение сразу даёт `invalid_request`, потому что такая подпись не прошла бы никогда |
 | `callbackUrl` | `string` | нет | Вебхук для всех сессий этого клиента (см. «Вебхуки») |
 | `requestTimeoutMs` | `number` | нет | Таймаут ОДНОГО HTTP-запроса, по умолчанию `10000` |
-| `requireHandshakeProof` | `boolean` | нет | Требовать доказательство handshake; по умолчанию `true` |
+| `requireHandshakeProof` | `boolean` | нет | **Устарела с 2.1.0, будет удалена в 3.0.** Не передавайте: `false` выключает проверку подписи кошелька, и SDK один раз предупреждает об этом в консоли |
 
 Конструктор проверяет конфиг сразу и бросает `invalid_request` на не-https
 `manifestUrl`, `walletAppLink` с query или fragment и `domain`, который не

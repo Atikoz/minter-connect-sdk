@@ -44,6 +44,8 @@ export class MinterConnectClient {
           'manifest host, so the handshake could never verify.',
       );
     }
+
+    if (config.requireHandshakeProof === false) warnHandshakeOptOutDeprecated();
   }
 
   async createSession(options: CreateSessionOptions = {}): Promise<MinterConnectSession> {
@@ -165,6 +167,22 @@ function assertSerializedSession(state: SerializedSession): void {
   if (typeof dexToken !== 'string' || !DEX_TOKEN_RE.test(dexToken)) {
     throw new MinterConnectError('invalid_request', 'Serialized session is missing a valid dexToken');
   }
+}
+
+let handshakeOptOutWarned = false;
+
+/**
+ * Один раз на процесс/страницу: клиентов обычно создают при каждом запросе, и
+ * предупреждение на каждый вызов забило бы логи.
+ */
+function warnHandshakeOptOutDeprecated(): void {
+  if (handshakeOptOutWarned) return;
+  handshakeOptOutWarned = true;
+  console.warn(
+    '[minter-connect-sdk] requireHandshakeProof: false is deprecated since 2.1.0 and will be removed in 3.0. ' +
+      'It disables verification of the wallet handshake, so the relay could substitute the wallet address or ' +
+      'the channel key. Remove the option: current relays always return the proof.',
+  );
 }
 
 /** Формат, который relay принимает в `Authorization: Bearer`. */

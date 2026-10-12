@@ -6,12 +6,24 @@
 Пакет ставится из GitHub по тегу версии:
 
 ```bash
-npm install github:Atikoz/minter-connect-sdk#v2.0.0
+npm install github:Atikoz/minter-connect-sdk#v2.1.0
 ```
 
 ## [Unreleased]
 
-Изменения только в демо и инструментах разработки, сам пакет не менялся.
+## [2.1.0] — 2026-10-12
+
+Совместимо с 2.0: обновление — та же команда установки с тегом `#v2.1.0`.
+
+### Устарело
+
+- Опция `requireHandshakeProof` (будет удалена в 3.0). Текущий relay всегда
+  отдаёт доказательство handshake, а `false` лишь выключает проверку подписи
+  кошелька: relay мог бы подменить адрес или ключ канала. Опция по-прежнему
+  работает, но помечена `@deprecated` в типах, а при `false` SDK один раз
+  пишет предупреждение в консоль. Что сделать: убрать опцию из конфига.
+- Ошибка `handshake_unverifiable` больше не советует передать
+  `requireHandshakeProof: false`, а предлагает обновить relay.
 
 ### Исправлено
 
@@ -137,6 +149,7 @@ SDK приведён к relay с manifest и `dexToken` (контракт: `mint
 Первая версия: подключение через relay со старым API (`dexName`,
 `walletBotUsername`, `sign(txParams)`), без `dexToken` и без домена в handshake.
 
-[Unreleased]: https://github.com/Atikoz/minter-connect-sdk/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/Atikoz/minter-connect-sdk/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/Atikoz/minter-connect-sdk/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/Atikoz/minter-connect-sdk/compare/9b7865c...v2.0.0
 [1.0.0]: https://github.com/Atikoz/minter-connect-sdk/commit/9b7865c

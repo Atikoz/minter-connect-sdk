@@ -439,8 +439,8 @@ export class MinterConnectSession {
         throw new MinterConnectError(
           'handshake_unverifiable',
           `Relay returned no handshake proof for session ${this.sessionId}. Without it the wallet address and ` +
-            'the channel key are taken on trust from the relay. Upgrade the relay, or pass ' +
-            'requireHandshakeProof: false to accept that risk explicitly.',
+            'the channel key are taken on trust from the relay. Upgrade the relay: requireHandshakeProof: false ' +
+            'is deprecated and will be removed in 3.0.',
         );
       }
       return false;
