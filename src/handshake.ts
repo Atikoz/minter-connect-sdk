@@ -54,7 +54,8 @@ export type HandshakeFailure = 'domain_mismatch' | 'stale_proof' | 'address_mism
 /** Допустимое расхождение часов кошелька и сайта — то же PROOF_MAX_AGE_MS, что в relay. */
 export const PROOF_MAX_CLOCK_SKEW_MS = 120_000;
 
-const MINTER_ADDRESS_RE = /^Mx[0-9a-fA-F]{40}$/;
+/** Адрес Minter: `Mx` + 40 hex в любом регистре. Тот же формат проверяют relay и кошелёк. */
+export const MINTER_ADDRESS_RE = /^Mx[0-9a-fA-F]{40}$/;
 
 /**
  * Домен в подписи — `URL.host`: нижний регистр, порт только нестандартный.

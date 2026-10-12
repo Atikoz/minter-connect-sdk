@@ -141,8 +141,15 @@ function send(res: ServerResponse, status: number, body: unknown, type = 'applic
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let raw = '';
-  for await (const chunk of req) raw += chunk;
+  // События, а не for-await: типы async-итератора у IncomingMessage зависят от того,
+  // какие lib подхватил компилятор, и иногда не сходятся.
+  const raw = await new Promise<string>((resolve, reject) => {
+    let data = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => (data += chunk));
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
   if (!raw) return {};
   const parsed: unknown = JSON.parse(raw);
   return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};

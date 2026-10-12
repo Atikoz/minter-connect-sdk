@@ -1,11 +1,10 @@
 /**
  * Транспорт к relay: один fetch, один таймаут, одна таблица ошибок.
  *
- * Причина существования отдельного модуля — чтобы client.ts и session.ts мапили
- * ответы relay ОДИНАКОВО. Раньше каждый имел собственный `if (!res.ok) throw
- * network_error`, и DEX получал "сетевую ошибку" одинаково на 400
- * (ошибка интегратора), 410 (пользователь отозвал доступ) и 429 (лимит) —
- * то есть в двух случаях из трёх ретрай был бессмыслен, а SDK его поощрял.
+ * Все ответы relay мапятся в коды SDK здесь и только здесь, чтобы client.ts и
+ * session.ts вели себя одинаково: 400 — ошибка интегратора, 410 — сессии
+ * больше нет, 429 — подождать. Для DEX это разные реакции, и `network_error`
+ * на всё подряд толкал бы к бессмысленным ретраям.
  */
 
 import { MinterConnectError, type MinterConnectErrorCode } from './types.js';
@@ -66,8 +65,9 @@ export async function relayFetch<T>(url: string, options: RelayRequestOptions = 
   // await бесконечно, и заявленный timeoutMs цикла поллинга не срабатывает —
   // он проверяется только МЕЖДУ итерациями, до которых дело так и не доходит.
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  // AbortSignal.any есть в Node с 20.3 (engines требует >= 20.19) и во всех
-  // актуальных браузерах, но типы DOM в этой версии TS о нём ещё не знают.
+  // AbortSignal.any есть в Node с 20.3 (engines требует >= 20.19) и во всех актуальных браузерах.
+  // Тип приводим явно: AbortSignal объявлен и в lib DOM (без `any`), и в @types/node,
+  // и какое объявление победит, компилятор решает нестабильно.
   const composedSignal = signal
     ? (AbortSignal as typeof AbortSignal & { any(signals: AbortSignal[]): AbortSignal }).any([signal, timeoutSignal])
     : timeoutSignal;
@@ -116,8 +116,8 @@ async function toMinterConnectError(res: Response, url: string): Promise<MinterC
   const parts = [`Relay responded ${res.status}`, error, message].filter(Boolean);
   return new MinterConnectError(code, `${parts.join(' ')} (${url})`, {
     httpStatus: res.status,
-    ...(error !== undefined ? { relayError: error } : {}),
-    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    relayError: error,
+    retryAfterMs,
   });
 }
 

@@ -123,6 +123,11 @@ export interface SerializedSession {
   sessionId: string;
   ephemeralSecretKeyHex: string;
   dexToken: string;
+  /**
+   * Ключ проверки вебхуков этой сессии — тоже секрет. Нет у сессий без
+   * callbackUrl и у состояний, сохранённых до появления поля.
+   */
+  webhookSecret?: string;
 }
 
 /** Статус запроса на подпись в relay. */

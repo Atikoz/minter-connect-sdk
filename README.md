@@ -459,7 +459,16 @@ X-Relay-Signature: sha256=<hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`)>
 
 Без проверки `X-Relay-Signature` ваш эндпоинт принимает поддельный колбэк от
 любого, кто узнал URL: «эта транзакция подписана», и сайт отпускает товар.
-Секрет тот же, что у relay в `WEBHOOK_SIGNING_SECRET`.
+
+Секрет у каждой сессии свой: `session.webhookSecret` (есть, если сессия
+создана с `callbackUrl`). Relay выдаёт его один раз при создании сессии, поэтому
+сохраните его вместе с `session.serialize()` — он входит в сериализованное
+состояние. Общего секрета relay больше не раздаёт: иначе любой DEX мог бы
+подделать колбэк для чужого сайта.
+
+Порядок проверки: взять `sessionId` из тела, найти **свой** сохранённый
+`webhookSecret` этой сессии (нет такой сессии — 401), и только потом сверять
+подпись.
 
 ```typescript
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -485,8 +494,10 @@ export function verifyRelayWebhook(rawBody: string, headers: Record<string, stri
 В Express сырое тело нужно сохранить явно:
 
 ```typescript
-app.post('/minter-webhook', express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8'); } }), (req, res) => {
-  if (!verifyRelayWebhook((req as any).rawBody, req.headers as Record<string, string>, process.env.WEBHOOK_SIGNING_SECRET!)) {
+app.post('/minter-webhook', express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf.toString('utf8'); } }), async (req, res) => {
+  // Ваше хранилище: то же место, куда вы кладёте session.serialize().
+  const stored = await sessionStore.get(String(req.body?.sessionId));
+  if (!stored?.webhookSecret || !verifyRelayWebhook((req as any).rawBody, req.headers as Record<string, string>, stored.webhookSecret)) {
     return res.sendStatus(401); // 4xx — relay больше не будет ретраить этот колбэк
   }
   // ... обработка req.body.status

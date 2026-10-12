@@ -7,7 +7,7 @@ import {
 } from './crypto.js';
 import { verifyHandshake } from './handshake.js';
 import { buildSendTransactionRequest, walletRejectionError } from './transaction.js';
-import { relayFetch, DEFAULT_REQUEST_TIMEOUT_MS } from './http.js';
+import { relayFetch, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_RETRY_AFTER_MS } from './http.js';
 import { applyJitter, growInterval, sleep } from './polling.js';
 import {
   MinterConnectError,
@@ -31,6 +31,15 @@ interface RelaySessionState {
   expiresAt: string | null;
 }
 
+/** Подтверждённая сессия: адрес и ключ канала уже есть, доказательство ещё не проверено. */
+type ConfirmedSessionState = RelaySessionState & { walletAddress: string; walletPublicKeyHex: string };
+
+/** То, что relay отдаёт в GET /requests/:reqId. */
+interface RelayRequestState {
+  status: SigningStatus;
+  encryptedResult: EncryptedPayload | null;
+}
+
 export interface SessionDeps {
   relayUrl: string;
   sessionId: string;
@@ -38,6 +47,8 @@ export interface SessionDeps {
   ephemeralSecretKey: Uint8Array;
   /** Bearer-токен сессии из POST /sessions. */
   dexToken: string;
+  /** Секрет подписи вебхуков этой сессии из POST /sessions (только с callbackUrl). */
+  webhookSecret?: string;
   /** Собственный домен сайта из конфига клиента. */
   expectedDomain: string;
   /** ISO-8601 дедлайн pairing'а из POST /sessions. */
@@ -70,21 +81,25 @@ export interface RequestTransactionOptions {
   requestId?: string;
 }
 
+/** Поллинг подключения: юзеру нужно открыть Telegram, поэтому начинаем не слишком часто. */
+const CONNECT_POLL_INTERVAL_MS = 2_000;
+const CONNECT_POLL_MAX_INTERVAL_MS = 10_000;
+
+/** Поллинг подписи: запрос живёт ~90 с, потолок ниже, чтобы не пропустить ответ. */
+const SIGN_POLL_INTERVAL_MS = 2_000;
+const SIGN_POLL_MAX_INTERVAL_MS = 5_000;
+
 /**
- * Запас сверх TTL запроса. Без него SDK сдаётся ровно в тот момент, когда запрос
- * протухает: гонка решается как `signing_timeout` (ничего не понятно)
- * вместо `signing_expired` (понятно: кошелёк не успел).
+ * Запас сверх TTL запроса: SDK дожидается, пока relay сам переведёт запрос в
+ * `expired`, и отдаёт `signing_expired` (кошелёк не успел) вместо
+ * безадресного `signing_timeout`.
  */
 const SIGNING_GRACE_MS = 15_000;
 
 /** Фолбэк, если relay не вернул expiresAt: дефолтный REQUEST_TTL_MS relay. */
 const FALLBACK_REQUEST_TTL_MS = 90_000;
 
-/**
- * Запас сверх дедлайна pairing'а — ровно та же логика, что и SIGNING_GRACE_MS:
- * даёт relay успеть перевести сессию в `expired`, чтобы пользователь увидел
- * "время вышло", а не безадресный `connection_timeout`.
- */
+/** Тот же запас, что SIGNING_GRACE_MS, но для pairing'а: `session_expired` вместо `connection_timeout`. */
 const PAIRING_GRACE_MS = 10_000;
 
 /** Фолбэк, если relay не вернул expiresAt на POST /sessions: его PAIRING_TTL_MS. */
@@ -118,6 +133,12 @@ export class MinterConnectSession {
    * 5 минут), после waitForConnection() — дедлайн самой сессии (7 дней).
    */
   expiresAt: string | null;
+  /**
+   * Ключ для проверки `X-Relay-Signature` вебхуков ЭТОЙ сессии (см. README →
+   * «Вебхуки»). Есть, только если сессия создана с callbackUrl и relay
+   * подписывает вебхуки. Секрет: храните рядом с serialize().
+   */
+  readonly webhookSecret: string | undefined;
 
   private readonly relayUrl: string;
   private readonly ephemeralSecretKey: Uint8Array;
@@ -136,6 +157,7 @@ export class MinterConnectSession {
     this.relayUrl = deps.relayUrl;
     this.ephemeralSecretKey = deps.ephemeralSecretKey;
     this.dexToken = deps.dexToken;
+    this.webhookSecret = deps.webhookSecret;
     this.expectedDomain = deps.expectedDomain;
     this.expiresAt = deps.expiresAt;
     this.requestTimeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -154,11 +176,10 @@ export class MinterConnectSession {
 
   /**
    * Состояние для сохранения между запусками DEX. Relay держит подтверждённую сессию
-   * 7 дней, но ephemeral-ключ живёт только в памяти этого инстанса — без
-   * serialize() перезагрузка страницы требует нового пейринга, и этот TTL
-   * обслуживает только сторону кошелька.
+   * 7 дней, но ephemeral-ключ и dexToken живут только в памяти этого инстанса —
+   * без serialize() перезагрузка страницы требует нового пейринга.
    *
-   * Возвращает ДВА СЕКРЕТА (ephemeral-ключ и dexToken, см. SerializedSession):
+   * Возвращает СЕКРЕТЫ (ephemeral-ключ, dexToken и webhookSecret, см. SerializedSession):
    * храните только на сервере или в зашифрованном виде. Восстановление — через
    * MinterConnectClient.restoreSession().
    */
@@ -168,6 +189,7 @@ export class MinterConnectSession {
       sessionId: this.sessionId,
       ephemeralSecretKeyHex: secretKeyToHex(this.ephemeralSecretKey),
       dexToken: this.dexToken,
+      ...(this.webhookSecret ? { webhookSecret: this.webhookSecret } : {}),
     };
   }
 
@@ -186,23 +208,7 @@ export class MinterConnectSession {
     this.assertOpen();
 
     const session = await this.fetchSessionState();
-    this.expiresAt = session.expiresAt ?? this.expiresAt;
-
-    if (session.status === 'revoked') {
-      throw new MinterConnectError(
-        'session_revoked',
-        `Session ${this.sessionId} was revoked in the wallet; create a new session to reconnect`,
-        { relayError: 'session_revoked' },
-      );
-    }
-    if (session.status === 'expired') {
-      throw new MinterConnectError(
-        'session_expired',
-        `Session ${this.sessionId} expired; create a new session`,
-        { relayError: 'session_expired' },
-      );
-    }
-
+    this.throwIfTerminal(session, 'resume');
     return this.adoptConnectedState(session, Number.POSITIVE_INFINITY);
   }
 
@@ -225,7 +231,7 @@ export class MinterConnectSession {
 
   /** Опрашивает relay, пока юзер не подтвердит подключение в кошельке (или пока не выйдет время). */
   async waitForConnection(options: WaitForConnectionOptions = {}): Promise<ConnectionResult> {
-    const { intervalMs = 2000, maxIntervalMs = 10_000 } = options;
+    const { intervalMs = CONNECT_POLL_INTERVAL_MS, maxIntervalMs = CONNECT_POLL_MAX_INTERVAL_MS } = options;
     const timeoutMs = options.timeoutMs ?? this.defaultPairingTimeoutMs();
     this.assertOpen();
 
@@ -238,27 +244,8 @@ export class MinterConnectSession {
 
     while (Date.now() < deadline) {
       const session = await this.pollWithRateLimit(() => this.fetchSessionState(), deadline);
-
-      this.expiresAt = session.expiresAt ?? this.expiresAt;
-
-      // Терминальные статусы. Раньше цикл их игнорировал и крутился до конца
-      // timeoutMs, после чего бросал connection_timeout — то есть сообщал
-      // НЕВЕРНУЮ причину: пользователь не "не успел", он отказал или
-      // сессия уже мертва, и ждать не было смысла с первой же итерации.
-      if (session.status === 'revoked') {
-        throw new MinterConnectError(
-          'session_revoked',
-          `Session ${this.sessionId} was revoked in the wallet; create a new session to reconnect`,
-          { relayError: 'session_revoked' },
-        );
-      }
-      if (session.status === 'expired') {
-        throw new MinterConnectError(
-          'session_expired',
-          `Session ${this.sessionId} expired before the wallet confirmed it; create a new session`,
-          { relayError: 'session_expired' },
-        );
-      }
+      // Отказ или протухание видны с первой же итерации — ждать дальше незачем.
+      this.throwIfTerminal(session, 'pairing');
 
       const connected = await this.adoptConnectedState(session, CONNECT_PROOF_MAX_AGE_MS);
       if (connected) return connected;
@@ -294,14 +281,17 @@ export class MinterConnectSession {
   async requestTransaction(params: SendTransactionParams, options: RequestTransactionOptions = {}): Promise<string> {
     this.assertOpen();
     const request = buildSendTransactionRequest(params);
-    this.assertConnected();
+    const aesKey = this.requireChannelKey();
 
-    const encryptedPayload = await encryptPayload(this.aesKey!, request);
-    const { reqId, expiresAt } = await this.post<{ reqId: string; status: SigningStatus; expiresAt: string }>(
-      `${this.relayUrl}/sessions/${this.sessionId}/requests`,
-      { encryptedPayload },
+    const { reqId, expiresAt } = await this.relay<{ reqId: string; status: SigningStatus; expiresAt: string }>(
+      'POST',
+      `/sessions/${encodeURIComponent(this.sessionId)}/requests`,
+      { encryptedPayload: await encryptPayload(aesKey, request) },
       options.requestId,
     );
+    if (typeof reqId !== 'string' || !reqId) {
+      throw new MinterConnectError('relay_error', 'Relay accepted the signing request but returned no reqId');
+    }
 
     this.rememberRequestExpiry(reqId, expiresAt);
     return reqId;
@@ -313,8 +303,8 @@ export class MinterConnectSession {
    * `wallet_bad_request` или `wallet_signing_failed`.
    */
   async waitForSignature(reqId: string, options: WaitForSignatureOptions = {}): Promise<string> {
-    this.assertConnected();
-    const { pollIntervalMs = 2000, maxIntervalMs = 5000 } = options;
+    const aesKey = this.requireChannelKey();
+    const { pollIntervalMs = SIGN_POLL_INTERVAL_MS, maxIntervalMs = SIGN_POLL_MAX_INTERVAL_MS } = options;
     const timeoutMs = options.timeoutMs ?? this.defaultSigningTimeoutMs(reqId);
 
     const deadline = Date.now() + timeoutMs;
@@ -323,18 +313,15 @@ export class MinterConnectSession {
     try {
       while (Date.now() < deadline) {
         const result = await this.pollWithRateLimit(
-          () =>
-            this.get<{ status: SigningStatus; encryptedResult: EncryptedPayload | null }>(
-              `${this.relayUrl}/requests/${reqId}`,
-            ),
+          () => this.relay<RelayRequestState>('GET', `/requests/${encodeURIComponent(reqId)}`),
           deadline,
         );
 
-        if (result.status === 'signed') return await this.readSignedResult(reqId, result.encryptedResult);
+        if (result.status === 'signed') return await readSignedResult(reqId, aesKey, result.encryptedResult);
         if (result.status === 'rejected') {
           // Relay также переводит pending-запросы в 'rejected' без результата,
           // когда кошелёк отзывает сессию, — это тоже wallet_bad_request.
-          throw walletRejectionError(reqId, await this.tryDecrypt(result.encryptedResult));
+          throw walletRejectionError(reqId, await tryDecrypt(aesKey, result.encryptedResult));
         }
         if (result.status === 'expired') {
           throw new MinterConnectError('signing_expired', 'Signing request expired before the wallet responded');
@@ -354,36 +341,31 @@ export class MinterConnectSession {
    * Внутреннее
    * ------------------------------------------------------------------ */
 
-  private async readSignedResult(reqId: string, encryptedResult: EncryptedPayload | null): Promise<string> {
-    const result = await this.tryDecrypt(encryptedResult);
-    const signedTxHex = result && typeof result === 'object' ? (result as { signedTxHex?: unknown }).signedTxHex : undefined;
-    if (typeof signedTxHex !== 'string' || !/^(0x)?[0-9a-fA-F]+$/.test(signedTxHex)) {
-      throw new MinterConnectError(
-        'relay_error',
-        `Request ${reqId} is 'signed', but the result is missing or unreadable (no valid signedTxHex)`,
-      );
-    }
-    return signedTxHex;
-  }
-
-  /** `undefined` — результата нет или он не расшифровывается этим ключом. */
-  private async tryDecrypt(encrypted: EncryptedPayload | null | undefined): Promise<unknown> {
-    if (!encrypted) return undefined;
-    try {
-      return await decryptPayload<unknown>(this.aesKey!, encrypted);
-    } catch (err) {
-      // Отсутствующий Web Crypto — проблема окружения, а не результата.
-      if (err instanceof MinterConnectError) throw err;
-      return undefined;
-    }
-  }
-
   private connectionResult(): ConnectionResult {
     return { walletAddress: this.walletAddress!, handshakeVerified: this.handshakeVerified, expiresAt: this.expiresAt };
   }
 
-  private fetchSessionState(): Promise<RelaySessionState> {
-    return this.get<RelaySessionState>(`${this.relayUrl}/sessions/${this.sessionId}`);
+  private async fetchSessionState(): Promise<RelaySessionState> {
+    const session = await this.relay<RelaySessionState>('GET', `/sessions/${encodeURIComponent(this.sessionId)}`);
+    this.expiresAt = session.expiresAt ?? this.expiresAt;
+    return session;
+  }
+
+  /** `revoked` / `expired` — сессия мертва, ни ожидание, ни восстановление не помогут. */
+  private throwIfTerminal(session: RelaySessionState, phase: 'pairing' | 'resume'): void {
+    if (session.status === 'revoked') {
+      throw new MinterConnectError(
+        'session_revoked',
+        `Session ${this.sessionId} was revoked in the wallet; create a new session to reconnect`,
+        { relayError: 'session_revoked' },
+      );
+    }
+    if (session.status === 'expired') {
+      const when = phase === 'pairing' ? ' before the wallet confirmed it' : '';
+      throw new MinterConnectError('session_expired', `Session ${this.sessionId} expired${when}; create a new session`, {
+        relayError: 'session_expired',
+      });
+    }
   }
 
   /**
@@ -394,30 +376,15 @@ export class MinterConnectSession {
    * Поэтому персистентность ничего не ослабляет: сохранённого `handshakeVerified` не
    * существует, есть только свежая подпись кошелька, проверенная заново.
    */
-  private async adoptConnectedState(
-    session: RelaySessionState,
-    maxProofAgeMs: number,
-  ): Promise<ConnectionResult | null> {
-    if (session.status !== 'connected' || !session.walletAddress || !session.walletPublicKeyHex) return null;
+  private async adoptConnectedState(session: RelaySessionState, maxProofAgeMs: number): Promise<ConnectionResult | null> {
+    if (!isConfirmed(session)) return null;
 
-    const handshakeVerified = this.checkHandshake(session, session.walletAddress, session.walletPublicKeyHex, maxProofAgeMs);
+    const handshakeVerified = this.checkHandshake(session, maxProofAgeMs);
 
     this.walletAddress = session.walletAddress;
     this.handshakeVerified = handshakeVerified;
     this.aesKey = await deriveSharedAesKey(this.ephemeralSecretKey, session.walletPublicKeyHex);
     return this.connectionResult();
-  }
-
-  /**
-   * Дедлайн пейринга берётся из expiresAt, который relay вернул на
-   * POST /sessions, — так же, как дедлайн подписи берётся из POST /requests.
-   * Хардкод 120_000 был вдвое короче PAIRING_TTL_MS relay: SDK бросал
-   * connection_timeout, пока ссылка ещё была вполне рабочей.
-   */
-  private defaultPairingTimeoutMs(): number {
-    const expiry = this.expiresAt ? Date.parse(this.expiresAt) : Number.NaN;
-    const ttlLeftMs = Number.isNaN(expiry) ? FALLBACK_PAIRING_TTL_MS : expiry - Date.now();
-    return Math.max(0, ttlLeftMs) + PAIRING_GRACE_MS;
   }
 
   /**
@@ -427,12 +394,7 @@ export class MinterConnectSession {
    * адрес. В обоих случаях дальнейшее шифрование бессмысленно, поэтому бросаем
    * сразу и НЕ помечаем ошибку как лечащуюся переподключением.
    */
-  private checkHandshake(
-    session: RelaySessionState,
-    walletAddress: string,
-    ecdhPublicKeyHex: string,
-    maxAgeMs: number,
-  ): boolean {
+  private checkHandshake(session: ConfirmedSessionState, maxAgeMs: number): boolean {
     const { identityPublicKeyHex, handshakeSignature } = session;
     if (!identityPublicKeyHex || !handshakeSignature) {
       if (this.requireHandshakeProof) {
@@ -449,9 +411,9 @@ export class MinterConnectSession {
     const failure = verifyHandshake(
       {
         sessionId: this.sessionId,
-        walletAddress,
+        walletAddress: session.walletAddress,
         identityPublicKeyHex,
-        ecdhPublicKeyHex,
+        ecdhPublicKeyHex: session.walletPublicKeyHex,
         // Домен и время — то, что relay заявляет как подписанное. Проверяется
         // подписью и сравнением с НАШИМ expectedDomain, а не доверием.
         domain: session.dexDomain ?? '',
@@ -474,11 +436,14 @@ export class MinterConnectSession {
     return true;
   }
 
-  /**
-   * Дедлайн берётся из expiresAt, который relay вернул на POST /requests, —
-   * это единственный источник истины о TTL. Хардкод 90_000 в SDK совпадал с
-   * REQUEST_TTL_MS relay ровно, поэтому SDK и relay сдавались одновременно.
-   */
+  /** Дедлайн пейринга — из expiresAt ответа POST /sessions, а не из константы SDK. */
+  private defaultPairingTimeoutMs(): number {
+    const expiry = this.expiresAt ? Date.parse(this.expiresAt) : Number.NaN;
+    const ttlLeftMs = Number.isNaN(expiry) ? FALLBACK_PAIRING_TTL_MS : expiry - Date.now();
+    return Math.max(0, ttlLeftMs) + PAIRING_GRACE_MS;
+  }
+
+  /** Дедлайн подписи — из expiresAt ответа POST /requests: это единственный источник истины о TTL. */
   private defaultSigningTimeoutMs(reqId: string): number {
     const expiry = this.requestExpiries.get(reqId);
     const ttlLeftMs = expiry !== undefined ? expiry - Date.now() : FALLBACK_REQUEST_TTL_MS;
@@ -508,7 +473,7 @@ export class MinterConnectSession {
         return await request();
       } catch (err) {
         if (!(err instanceof MinterConnectError) || err.code !== 'rate_limited') throw err;
-        const waitMs = err.retryAfterMs ?? 1000;
+        const waitMs = err.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS;
         if (Date.now() + waitMs >= deadline) throw err;
         await sleep(waitMs, this.abortController.signal);
       }
@@ -528,7 +493,8 @@ export class MinterConnectSession {
     }
   }
 
-  private assertConnected(): void {
+  /** Ключ канала подключённой сессии; иначе `session_closed` / `session_not_connected`. */
+  private requireChannelKey(): CryptoKey {
     this.assertOpen();
     if (!this.aesKey || !this.walletAddress) {
       throw new MinterConnectError(
@@ -536,24 +502,46 @@ export class MinterConnectSession {
         'Call waitForConnection() first — the wallet has not confirmed this session yet',
       );
     }
+    return this.aesKey;
   }
 
-  private get<T>(url: string): Promise<T> {
-    return relayFetch<T>(url, {
-      signal: this.abortController.signal,
-      timeoutMs: this.requestTimeoutMs,
-      authToken: this.dexToken,
-    });
-  }
-
-  private post<T>(url: string, body: unknown, requestId?: string): Promise<T> {
-    return relayFetch<T>(url, {
-      method: 'POST',
+  /** Запрос к маршруту DEX: Bearer-токен сессии, таймаут и отмена через close(). */
+  private relay<T>(method: 'GET' | 'POST', path: string, body?: unknown, requestId?: string): Promise<T> {
+    return relayFetch<T>(`${this.relayUrl}${path}`, {
+      method,
       body,
+      requestId,
       signal: this.abortController.signal,
       timeoutMs: this.requestTimeoutMs,
       authToken: this.dexToken,
-      ...(requestId ? { requestId } : {}),
     });
+  }
+}
+
+function isConfirmed(session: RelaySessionState): session is ConfirmedSessionState {
+  return session.status === 'connected' && Boolean(session.walletAddress) && Boolean(session.walletPublicKeyHex);
+}
+
+async function readSignedResult(reqId: string, aesKey: CryptoKey, encrypted: EncryptedPayload | null): Promise<string> {
+  const result = await tryDecrypt(aesKey, encrypted);
+  const signedTxHex = result && typeof result === 'object' ? (result as { signedTxHex?: unknown }).signedTxHex : undefined;
+  if (typeof signedTxHex !== 'string' || !/^(0x)?[0-9a-fA-F]+$/.test(signedTxHex)) {
+    throw new MinterConnectError(
+      'relay_error',
+      `Request ${reqId} is 'signed', but the result is missing or unreadable (no valid signedTxHex)`,
+    );
+  }
+  return signedTxHex;
+}
+
+/** `undefined` — результата нет или он не расшифровывается этим ключом. */
+async function tryDecrypt(aesKey: CryptoKey, encrypted: EncryptedPayload | null | undefined): Promise<unknown> {
+  if (!encrypted) return undefined;
+  try {
+    return await decryptPayload<unknown>(aesKey, encrypted);
+  } catch (err) {
+    // Отсутствующий Web Crypto — проблема окружения, а не результата.
+    if (err instanceof MinterConnectError) throw err;
+    return undefined;
   }
 }

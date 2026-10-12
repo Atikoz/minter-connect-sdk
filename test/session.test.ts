@@ -88,7 +88,7 @@ describe('waitForConnection: терминальные статусы', () => {
     const result = await session.waitForConnection({ intervalMs: 5, timeoutMs: 5000 });
 
     expect(result.walletAddress).toBe(wallet.address);
-    // C2: expiresAt больше не выбрасывается — DEX знает, когда сессия умрёт.
+    // expiresAt сессии доходит до DEX: он знает, когда сессия умрёт.
     expect(result.expiresAt).toBe('2030-01-01T00:00:00.000Z');
     expect(session.expiresAt).toBe('2030-01-01T00:00:00.000Z');
     expect(stub.calls.length).toBeGreaterThanOrEqual(4);
@@ -271,6 +271,14 @@ describe('подпись', () => {
     }
   });
 
+  it('reqId от интегратора кодируется в пути и не меняет маршрут', async () => {
+    const { session, calls } = await connectSession(() => ({ json: { status: 'expired', encryptedResult: null } }));
+
+    await session.waitForSignature('../sessions/x', { pollIntervalMs: 5 }).catch(() => {});
+    const get = calls.at(-1)!;
+    expect(get.url).toBe(`${RELAY_URL}/requests/..%2Fsessions%2Fx`);
+  });
+
   it('невалидные params дают invalid_request даже до подключения', async () => {
     const { client, stub } = clientWith(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     const session = await client.createSession();
@@ -287,9 +295,9 @@ describe('подпись', () => {
   });
 
   it('таймаут по умолчанию переживает TTL запроса, а не сдаётся одновременно с ним', async () => {
-    // REQUEST_TTL_MS relay и старый дефолт SDK совпадали (90_000), поэтому при
-    // протухании выигрывал тот, кто первый: интегратор ловил signing_timeout
-    // ("непонятно, попробуйте ещё") вместо signing_expired ("кошелёк не успел").
+    // Если SDK сдаётся одновременно с TTL relay, на протухании выигрывает тот, кто
+    // первый: интегратор ловил бы signing_timeout ("непонятно, попробуйте ещё")
+    // вместо signing_expired ("кошелёк не успел").
     const startedAt = Date.now();
     const { session, calls } = await connectSession((call) => {
       if (call.method === 'POST') return pendingRequestReply(FAKE_REQ_ID, 300); // TTL 300 мс

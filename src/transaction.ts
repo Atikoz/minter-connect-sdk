@@ -6,6 +6,7 @@
  * не `wallet_bad_request` через минуту ожидания и пуш юзеру в Telegram.
  */
 
+import { MINTER_ADDRESS_RE } from './handshake.js';
 import { MinterConnectError, type MinterConnectErrorCode, type SendTransactionParams } from './types.js';
 
 export const REQUEST_FORMAT_VERSION = 1;
@@ -17,7 +18,6 @@ export interface SendTransactionRequest {
   params: SendTransactionParams;
 }
 
-const TO_RE = /^Mx[0-9a-fA-F]{40}$/;
 const AMOUNT_RE = /^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$/;
 const COIN_RE = /^[A-Z0-9-]{3,10}$/;
 const PARAM_KEYS = ['to', 'amount', 'coin'] as const;
@@ -40,7 +40,7 @@ export function buildSendTransactionRequest(params: SendTransactionParams): Send
   }
 
   const { to, amount, coin } = params as Partial<Record<(typeof PARAM_KEYS)[number], unknown>>;
-  if (typeof to !== 'string' || !TO_RE.test(to)) {
+  if (typeof to !== 'string' || !MINTER_ADDRESS_RE.test(to)) {
     throw invalid(`params.to must be a Minter address (Mx + 40 hex), got ${describe(to)}`);
   }
   if (typeof amount !== 'string' || !AMOUNT_RE.test(amount)) {
@@ -75,10 +75,10 @@ const WALLET_ERROR_CODES: Record<string, MinterConnectErrorCode> = {
  * трактуется как `bad_request` (у кошелька нет ключа этой сессии).
  */
 export function walletRejectionError(reqId: string, result: unknown): MinterConnectError {
-  const error = result && typeof result === 'object' ? (result as { error?: unknown }).error : undefined;
-  const walletCode = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
-  const walletMessage = error && typeof error === 'object' ? (error as { message?: unknown }).message : undefined;
-  const details = typeof walletMessage === 'string' ? { walletErrorMessage: walletMessage } : {};
+  const error = field(result, 'error');
+  const walletCode = field(error, 'code');
+  const walletMessage = field(error, 'message');
+  const details = { walletErrorMessage: typeof walletMessage === 'string' ? walletMessage : undefined };
 
   if (result === undefined) {
     return new MinterConnectError(
@@ -106,6 +106,11 @@ export function walletRejectionError(reqId: string, result: unknown): MinterConn
       (code === undefined ? ` (unknown wallet error code: ${describe(walletCode)})` : ''),
     details,
   );
+}
+
+/** Поле недоверенного объекта (расшифрованный ответ кошелька) без исключений на не-объектах. */
+function field(value: unknown, key: string): unknown {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
 }
 
 function invalid(message: string): MinterConnectError {

@@ -27,9 +27,8 @@ export class MinterConnectClient {
   readonly domain: string;
 
   constructor(private config: MinterConnectConfig) {
-    // Конечный слеш в relayUrl дал бы '//sessions'. Fastify обычно это
-    // переживает, а прокси перед ним — не всегда.
-    this.relayUrl = config.relayUrl.replace(/\/+$/, '');
+    // Конечный слеш в relayUrl дал бы '//sessions': прокси перед relay не всегда это переживают.
+    this.relayUrl = parseRelayUrl(config.relayUrl);
     this.walletAppLink = parseWalletAppLink(config.walletAppLink);
     const manifestHost = parseManifestHost(config.manifestUrl);
 
@@ -52,9 +51,10 @@ export class MinterConnectClient {
     const ephemeral = generateEphemeralKeyPair();
     const callbackUrl = options.callbackUrl ?? this.config.callbackUrl;
 
-    const { sessionId, dexToken, expiresAt } = await relayFetch<{
+    const { sessionId, dexToken, webhookSecret, expiresAt } = await relayFetch<{
       sessionId: string;
       dexToken: string;
+      webhookSecret?: string;
       expiresAt: string | null;
     }>(
       `${this.relayUrl}/sessions`,
@@ -69,10 +69,13 @@ export class MinterConnectClient {
           ...(callbackUrl ? { callbackUrl } : {}),
         },
         timeoutMs: this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-        ...(options.requestId ? { requestId: options.requestId } : {}),
+        requestId: options.requestId,
       },
     );
 
+    if (typeof sessionId !== 'string' || !sessionId) {
+      throw new MinterConnectError('relay_error', 'Relay created a session but returned no sessionId');
+    }
     if (typeof dexToken !== 'string' || !DEX_TOKEN_RE.test(dexToken)) {
       // Relay без dexToken — старый формат: ни один следующий запрос не пройдёт.
       throw new MinterConnectError(
@@ -82,7 +85,7 @@ export class MinterConnectClient {
       );
     }
 
-    return this.buildSession(sessionId, ephemeral.secretKey, dexToken, expiresAt ?? null);
+    return this.buildSession(sessionId, ephemeral.secretKey, dexToken, expiresAt ?? null, webhookSecret);
   }
 
   /**
@@ -110,6 +113,7 @@ export class MinterConnectClient {
       secretKeyFromHex(state.ephemeralSecretKeyHex),
       state.dexToken,
       null,
+      state.webhookSecret,
     );
     try {
       await session.resume();
@@ -122,7 +126,13 @@ export class MinterConnectClient {
     return session;
   }
 
-  private buildSession(sessionId: string, ephemeralSecretKey: Uint8Array, dexToken: string, expiresAt: string | null) {
+  private buildSession(
+    sessionId: string,
+    ephemeralSecretKey: Uint8Array,
+    dexToken: string,
+    expiresAt: string | null,
+    webhookSecret?: string,
+  ) {
     return new MinterConnectSession({
       relayUrl: this.relayUrl,
       sessionId,
@@ -130,12 +140,12 @@ export class MinterConnectClient {
       deepLink: `${this.walletAppLink}?startapp=connect_${sessionId}`,
       ephemeralSecretKey,
       dexToken,
+      // Пустую строку или не-строку от relay секретом не считаем.
+      webhookSecret: typeof webhookSecret === 'string' && webhookSecret ? webhookSecret : undefined,
       expectedDomain: this.domain,
       expiresAt,
-      ...(this.config.requestTimeoutMs !== undefined ? { requestTimeoutMs: this.config.requestTimeoutMs } : {}),
-      ...(this.config.requireHandshakeProof !== undefined
-        ? { requireHandshakeProof: this.config.requireHandshakeProof }
-        : {}),
+      requestTimeoutMs: this.config.requestTimeoutMs,
+      requireHandshakeProof: this.config.requireHandshakeProof,
     });
   }
 }
@@ -147,7 +157,9 @@ export class MinterConnectClient {
  * где-то внутри крипты.
  */
 function assertSerializedSession(state: SerializedSession): void {
-  const { v, sessionId, ephemeralSecretKeyHex, dexToken } = (state ?? {}) as unknown as Partial<Record<string, unknown>>;
+  const { v, sessionId, ephemeralSecretKeyHex, dexToken, webhookSecret } = (state ?? {}) as unknown as Partial<
+    Record<string, unknown>
+  >;
   if (v === 1) {
     throw new MinterConnectError(
       'invalid_request',
@@ -166,6 +178,9 @@ function assertSerializedSession(state: SerializedSession): void {
   }
   if (typeof dexToken !== 'string' || !DEX_TOKEN_RE.test(dexToken)) {
     throw new MinterConnectError('invalid_request', 'Serialized session is missing a valid dexToken');
+  }
+  if (webhookSecret !== undefined && (typeof webhookSecret !== 'string' || !webhookSecret)) {
+    throw new MinterConnectError('invalid_request', 'Serialized session has an invalid webhookSecret');
   }
 }
 
@@ -209,6 +224,23 @@ function parseManifestHost(manifestUrl: string): string {
   // URL.host уже в нижнем регистре и без стандартного порта — ровно то,
   // что кошелёк подписывает как domain.
   return url.host;
+}
+
+function parseRelayUrl(relayUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(relayUrl);
+  } catch (cause) {
+    throw new MinterConnectError('invalid_request', `config.relayUrl is not a valid URL: ${String(relayUrl)}`, { cause });
+  }
+  // http допустим: relay на соседнем хосте во внутренней сети или localhost в разработке.
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new MinterConnectError('invalid_request', 'config.relayUrl must be an http(s) URL');
+  }
+  if (url.search || url.hash) {
+    throw new MinterConnectError('invalid_request', 'config.relayUrl must not contain a query or fragment');
+  }
+  return relayUrl.replace(/\/+$/, '');
 }
 
 function isLoopbackHost(hostname: string): boolean {

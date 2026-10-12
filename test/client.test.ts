@@ -60,6 +60,13 @@ describe('конфиг', () => {
     expect(configError({ manifestUrl: 'http://192.168.1.10/m.json' }).code).toBe('invalid_request');
   });
 
+  it('relayUrl — валидный http(s) URL без query/fragment', () => {
+    expect(configError({ relayUrl: 'relay.example.com' }).code).toBe('invalid_request');
+    expect(configError({ relayUrl: 'ftp://relay.example.com' }).code).toBe('invalid_request');
+    expect(configError({ relayUrl: 'https://relay.example.com/?x=1' }).code).toBe('invalid_request');
+    expect(() => new MinterConnectClient({ ...TEST_CLIENT_CONFIG, relayUrl: 'http://localhost:3000/' })).not.toThrow();
+  });
+
   it('walletAppLink без query/fragment', () => {
     expect(configError({ walletAppLink: `${TEST_WALLET_APP_LINK}?startapp=x` }).code).toBe('invalid_request');
     expect(configError({ walletAppLink: `${TEST_WALLET_APP_LINK}#x` }).code).toBe('invalid_request');
@@ -90,12 +97,48 @@ describe('createSession', () => {
     expect(session.deepLink).not.toContain(createdSessionReply(FAKE_SESSION_ID).dexToken as string);
   });
 
+  it('webhookSecret из ответа relay доступен в сессии и переживает serialize/restore', async () => {
+    const webhookSecret = 'w'.repeat(43);
+    const stub = createFetchStub(() => ({ json: { ...createdSessionReply(FAKE_SESSION_ID), webhookSecret } }));
+    vi.stubGlobal('fetch', stub.fetch);
+
+    const client = new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG });
+    const session = await client.createSession({ callbackUrl: 'https://dex.test/hooks/minter' });
+    expect(session.webhookSecret).toBe(webhookSecret);
+    expect(session.serialize().webhookSecret).toBe(webhookSecret);
+    // Секрет — не для ссылки, которую видит юзер.
+    expect(session.deepLink).not.toContain(webhookSecret);
+    session.close();
+  });
+
+  it('без webhookSecret в ответе поле в serialize() не появляется', async () => {
+    const stub = createFetchStub(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
+    vi.stubGlobal('fetch', stub.fetch);
+
+    const session = await new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG }).createSession();
+    expect(session.webhookSecret).toBeUndefined();
+    expect(session.serialize()).not.toHaveProperty('webhookSecret');
+    session.close();
+  });
+
   it('без callbackUrl поле не отправляется вообще (relay отвергает лишние/пустые)', async () => {
     const stub = createFetchStub(() => ({ json: createdSessionReply(FAKE_SESSION_ID) }));
     vi.stubGlobal('fetch', stub.fetch);
 
     await new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG }).createSession();
     expect(Object.keys(stub.calls[0]!.body as object).sort()).toEqual(['dexPublicKeyHex', 'manifestUrl']);
+  });
+
+  it('relay без sessionId в ответе -> relay_error', async () => {
+    const reply = createdSessionReply(FAKE_SESSION_ID);
+    delete reply.sessionId;
+    vi.stubGlobal('fetch', createFetchStub(() => ({ json: reply })).fetch);
+
+    const err = (await new MinterConnectClient({ relayUrl: RELAY_URL, ...TEST_CLIENT_CONFIG })
+      .createSession()
+      .catch((e: unknown) => e)) as MinterConnectError;
+    expect(err.code).toBe('relay_error');
+    expect(err.message).toMatch(/sessionId/);
   });
 
   it('relay без dexToken в ответе (старый) -> relay_error, а не сессия, которая никогда не заработает', async () => {

@@ -57,6 +57,27 @@ function restoreStub(wallet: SimulatedWallet, payload?: Record<string, unknown>)
 }
 
 describe('serialize / restoreSession', () => {
+  it('webhookSecret из сохранённого состояния возвращается в восстановленную сессию', async () => {
+    const { session, wallet } = await connectSession(() => pendingRequestReply(FAKE_REQ_ID));
+    const state = { ...session.serialize(), webhookSecret: 'w'.repeat(43) };
+    session.close();
+
+    restoreStub(wallet);
+    const restored = await newClient().restoreSession(state);
+    expect(restored.webhookSecret).toBe(state.webhookSecret);
+    expect(restored.serialize().webhookSecret).toBe(state.webhookSecret);
+    restored.close();
+  });
+
+  it('битый webhookSecret в состоянии -> invalid_request', async () => {
+    const { session } = await connectSession(() => pendingRequestReply(FAKE_REQ_ID));
+    const state = { ...session.serialize(), webhookSecret: 42 as unknown as string };
+    session.close();
+
+    const err = (await newClient().restoreSession(state).catch((e: unknown) => e)) as MinterConnectError;
+    expect(err.code).toBe('invalid_request');
+  });
+
   it('восстановленная сессия подписывает тем же ключом канала, что и до перезапуска', async () => {
     const { session, wallet, walletAesKey, calls } = await connectSession(() => pendingRequestReply(FAKE_REQ_ID));
     const state = session.serialize();
