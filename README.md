@@ -10,6 +10,7 @@ SDK для сайтов (DEX), чтобы подключаться к Minter-к�
 > `manifestUrl`, `walletBotUsername` → `walletAppLink`, `sign(txParams)` →
 > `sendTransaction({ to, amount, coin })`, `SerializedSession` v1 → v2.
 > Сессии 1.x не восстанавливаются, нужно новое подключение.
+> Пошаговая миграция и все изменения — в [CHANGELOG.md](CHANGELOG.md).
 
 ## Требования
 
