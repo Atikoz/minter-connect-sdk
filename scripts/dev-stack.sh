@@ -125,7 +125,9 @@ public_url() { # name port scheme existing-url
   local extra=()
   # Кошелёк в dev-режиме отдаёт https с самоподписанным сертификатом (plugin-basic-ssl).
   [[ "$3" == https ]] && extra=(--no-tls-verify)
-  start "tunnel-$1" "$SDK_DIR" cloudflared tunnel --no-autoupdate ${extra[@]+"${extra[@]}"} --url "$3://localhost:$2"
+  # http2 вместо QUIC по умолчанию: во многих сетях UDP 7844 закрыт, и туннель
+  # создаётся, но не подключается (Cloudflare отдаёт Error 1033).
+  start "tunnel-$1" "$SDK_DIR" cloudflared tunnel --no-autoupdate --protocol http2 ${extra[@]+"${extra[@]}"} --url "$3://localhost:$2"
 }
 
 say "публичные адреса…"
