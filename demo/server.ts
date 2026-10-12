@@ -21,12 +21,22 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync } from 'node:fs';
 import { MinterConnectClient, MinterConnectError, type MinterConnectSession } from '../src/index.js';
 
+// Переменные можно держать в .env в корне SDK (см. .env.example). Значения,
+// заданные в команде, приоритетнее: loadEnvFile не перезаписывает существующие.
+try {
+  process.loadEnvFile();
+} catch {
+  // .env нет — работаем на переменных окружения и значениях по умолчанию.
+}
+
 const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/+$/, '');
 const RELAY_URL = process.env.RELAY_URL ?? 'http://localhost:3000';
 const WALLET_APP_LINK = process.env.WALLET_APP_LINK ?? 'https://t.me/MinterWalletBot/app';
 /** Minter Node API v2 (…/v2), например тот, которым пользуется кошелёк. Нужен только для отправки. */
 const MINTER_NODE_URL = process.env.MINTER_NODE_URL?.replace(/\/+$/, '');
+
+console.log(`[demo] PUBLIC_URL=${PUBLIC_URL}, RELAY_URL=${RELAY_URL}, WALLET_APP_LINK=${WALLET_APP_LINK}, MINTER_NODE_URL=${MINTER_NODE_URL ?? '(not set — broadcast disabled)'}`);
 
 const client = new MinterConnectClient({
   relayUrl: RELAY_URL,
