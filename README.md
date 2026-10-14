@@ -27,14 +27,14 @@ SDK для сайтов (DEX), чтобы подключаться к Minter-к�
 незаметно поменяет SDK у вас на сайте.
 
 ```bash
-npm install github:Atikoz/minter-connect-sdk#v2.1.0
+npm install github:Atikoz/minter-connect-sdk#v2.2.0
 ```
 
 Это работает по https и без SSH-ключа (репозиторий публичный), в том числе в
 CI. Если у вас настроен SSH-доступ к GitHub, то же самое через SSH:
 
 ```bash
-npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.1.0
+npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.2.0
 ```
 
 При установке npm сам собирает `dist/` (скрипт `prepare`), поэтому на
