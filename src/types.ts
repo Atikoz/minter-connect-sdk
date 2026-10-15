@@ -64,7 +64,7 @@ export interface MinterConnectConfig {
 
 /**
  * Параметры запроса `sendTransaction` (формат v1, docs/API.md бэкенда →
- * «Вміст запитів і результатів»). Кошелёк берёт от сайта ТОЛЬКО эти три поля:
+ * «Содержимое запросов и результатов»). Кошелёк берёт от сайта ТОЛЬКО эти три поля:
  * nonce, комиссию, chainId и payload он определяет сам.
  */
 export interface SendTransactionParams {

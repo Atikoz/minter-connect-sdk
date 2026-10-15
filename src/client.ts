@@ -136,7 +136,7 @@ export class MinterConnectClient {
     return new MinterConnectSession({
       relayUrl: this.relayUrl,
       sessionId,
-      // docs/API.md → «Посилання на підключення». dexToken сюда не попадает.
+      // docs/API.md → «Ссылка на подключение». dexToken сюда не попадает.
       deepLink: `${this.walletAppLink}?startapp=connect_${sessionId}`,
       ephemeralSecretKey,
       dexToken,
