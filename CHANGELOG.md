@@ -6,10 +6,25 @@
 Пакет ставится из GitHub по тегу версии:
 
 ```bash
-npm install github:Atikoz/minter-connect-sdk#v2.2.0
+npm install github:Atikoz/minter-connect-sdk#v2.3.0
 ```
 
 ## [Unreleased]
+
+## [2.3.0] — 2026-10-26
+
+Совместимо с 2.2: только добавления.
+
+### Добавлено
+
+- `session.burnToken({ amount, coin })` и `session.requestBurnToken(...)` — запрос
+  кошельку на сжигание монеты СО СВОЕГО адреса (BURN_TOKEN, тип 0x1D). Результат
+  такой же, как у перевода: `signedTxHex`, отправляет в сеть сайт. На проводе —
+  `{ v: 1, method: 'burnToken', params: { amount, coin } }`; правила для `amount`
+  и `coin` те же, что у `sendTransaction`, лишние поля (включая `to`) — `invalid_request`.
+- Тип `BurnTokenParams`.
+
+Кошелёк, который метод `burnToken` ещё не поддерживает, ответит `wallet_bad_request`.
 
 ## [2.2.0] — 2026-10-14
 

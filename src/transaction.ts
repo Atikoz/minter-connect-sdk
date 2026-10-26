@@ -7,7 +7,12 @@
  */
 
 import { MINTER_ADDRESS_RE } from './handshake.js';
-import { MinterConnectError, type MinterConnectErrorCode, type SendTransactionParams } from './types.js';
+import {
+  MinterConnectError,
+  type BurnTokenParams,
+  type MinterConnectErrorCode,
+  type SendTransactionParams,
+} from './types.js';
 
 export const REQUEST_FORMAT_VERSION = 1;
 
@@ -16,6 +21,13 @@ export interface SendTransactionRequest {
   v: typeof REQUEST_FORMAT_VERSION;
   method: 'sendTransaction';
   params: SendTransactionParams;
+}
+
+/** То же для сжигания: `{ v: 1, method: 'burnToken', params: { amount, coin } }`. */
+export interface BurnTokenRequest {
+  v: typeof REQUEST_FORMAT_VERSION;
+  method: 'burnToken';
+  params: BurnTokenParams;
 }
 
 const AMOUNT_RE = /^(0|[1-9][0-9]*)(\.[0-9]{1,18})?$/;
@@ -60,6 +72,42 @@ export function buildSendTransactionRequest(params: SendTransactionParams): Send
   // Новый объект, а не params: в шифротекст не должно попасть ничего, кроме
   // этих трёх полей, даже если объект интегратора — инстанс класса с геттерами.
   return { v: REQUEST_FORMAT_VERSION, method: 'sendTransaction', params: { to, amount, coin } };
+}
+
+const BURN_PARAM_KEYS = ['amount', 'coin'] as const;
+
+/**
+ * Запрос на сжигание. Те же правила, что у перевода, минус `to`: лишние поля
+ * (в том числе `to`) кошелёк отклоняет, поэтому их отбрасывает и SDK.
+ */
+export function buildBurnTokenRequest(params: BurnTokenParams): BurnTokenRequest {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    throw invalid('params must be an object { amount, coin }');
+  }
+
+  const extra = Object.keys(params).filter((k) => !(BURN_PARAM_KEYS as readonly string[]).includes(k));
+  if (extra.length) {
+    throw invalid(
+      `Unsupported params field(s): ${extra.join(', ')}. burnToken accepts only { amount, coin }: ` +
+        'the wallet burns from its own address and picks nonce, fee and chainId itself',
+    );
+  }
+
+  const { amount, coin } = params as Partial<Record<(typeof BURN_PARAM_KEYS)[number], unknown>>;
+  if (typeof amount !== 'string' || !AMOUNT_RE.test(amount)) {
+    throw invalid(
+      `params.amount must be a decimal string in coins (not pip), e.g. '1.5', up to 18 decimals, ` +
+        `without sign or exponent; got ${describe(amount)}`,
+    );
+  }
+  if (!/[1-9]/.test(amount)) throw invalid('params.amount must be greater than zero');
+  if (typeof coin !== 'string' || !COIN_RE.test(coin)) {
+    throw invalid(
+      `params.coin must be a ticker of 3–10 characters A-Z, 0-9, '-' (case is not normalized), got ${describe(coin)}`,
+    );
+  }
+
+  return { v: REQUEST_FORMAT_VERSION, method: 'burnToken', params: { amount, coin } };
 }
 
 /** `error.code` кошелька в `rejected` -> код SDK. */

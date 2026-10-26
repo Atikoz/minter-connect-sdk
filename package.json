@@ -1,6 +1,6 @@
 {
   "name": "minter-connect-sdk",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Non-custodial SDK for connecting DEX apps to Minter wallets over a pairing relay: the user confirms and signs in their own wallet, your app never sees the private key.",
   "keywords": [
     "minter",

@@ -80,6 +80,19 @@ export interface SendTransactionParams {
   coin: string;
 }
 
+/**
+ * Параметры запроса `burnToken` (формат v1). Кошелёк сжигает `amount` монеты
+ * `coin` СО СВОЕГО адреса транзакцией BURN_TOKEN (тип 0x1D) — получателя нет,
+ * supply просто уменьшается. Монета должна быть `burnable`. Nonce, комиссию и
+ * chainId кошелёк, как и для перевода, определяет сам.
+ */
+export interface BurnTokenParams {
+  /** Сумма в МОНЕТАХ (не в pip), десятичной строкой, строго > 0 — как в SendTransactionParams. */
+  amount: string;
+  /** Тикер монеты: 3–10 символов `A-Z0-9-`. Регистр НЕ нормализуется. */
+  coin: string;
+}
+
 export interface ConnectionResult {
   /** Mx-адрес кошелька, который подтвердил подключение. */
   walletAddress: string;

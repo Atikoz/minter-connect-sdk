@@ -11,6 +11,7 @@ export type {
   MinterConnectErrorCode,
   MinterConnectErrorDetails,
   SendTransactionParams,
+  BurnTokenParams,
   ConnectionResult,
   SerializedSession,
   SessionStatus,

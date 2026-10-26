@@ -27,14 +27,14 @@ SDK для сайтов (DEX), чтобы подключаться к Minter-к�
 незаметно поменяет SDK у вас на сайте.
 
 ```bash
-npm install github:Atikoz/minter-connect-sdk#v2.2.0
+npm install github:Atikoz/minter-connect-sdk#v2.3.0
 ```
 
 Это работает по https и без SSH-ключа (репозиторий публичный), в том числе в
 CI. Если у вас настроен SSH-доступ к GitHub, то же самое через SSH:
 
 ```bash
-npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.2.0
+npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.3.0
 ```
 
 При установке npm сам собирает `dist/` (скрипт `prepare`), поэтому на
@@ -235,6 +235,20 @@ payload кошелёк определяет сам, так что сайт не 
 
 То же самое, но возвращает `reqId` сразу. Нужен, чтобы отправить несколько
 транзакций и ждать их независимо через `waitForSignature(reqId)`.
+
+#### `burnToken(params, options?): Promise<string>`
+
+Просит кошелёк **сжечь** монету со своего адреса (транзакция BURN_TOKEN). Получателя
+нет: supply монеты уменьшается. Возвращает `signedTxHex`, отправку в сеть делаете вы,
+как и для перевода.
+
+| Поле `params` | Формат |
+|---|---|
+| `amount` | то же, что у `sendTransaction`: строка в монетах, строго > 0 |
+| `coin` | тикер `^[A-Z0-9-]{3,10}$`; монета должна быть `burnable` |
+
+`requestBurnToken(params, options?)` — то же без ожидания, возвращает `reqId` для
+`waitForSignature()`. Кошелёк без поддержки метода ответит `wallet_bad_request`.
 
 #### `waitForSignature(reqId, options?): Promise<string>`
 

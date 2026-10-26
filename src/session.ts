@@ -6,7 +6,13 @@ import {
   type EncryptedPayload,
 } from './crypto.js';
 import { verifyHandshake } from './handshake.js';
-import { buildSendTransactionRequest, walletRejectionError } from './transaction.js';
+import {
+  buildBurnTokenRequest,
+  buildSendTransactionRequest,
+  walletRejectionError,
+  type BurnTokenRequest,
+  type SendTransactionRequest,
+} from './transaction.js';
 import { relayFetch, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_RETRY_AFTER_MS } from './http.js';
 import { applyJitter, growInterval, sleep } from './polling.js';
 import {
@@ -14,6 +20,7 @@ import {
   type ConnectionResult,
   type SerializedSession,
   type SessionStatus,
+  type BurnTokenParams,
   type SendTransactionParams,
   type SigningStatus,
 } from './types.js';
@@ -280,7 +287,34 @@ export class MinterConnectSession {
    */
   async requestTransaction(params: SendTransactionParams, options: RequestTransactionOptions = {}): Promise<string> {
     this.assertOpen();
-    const request = buildSendTransactionRequest(params);
+    return this.postRequest(buildSendTransactionRequest(params), options);
+  }
+
+  /**
+   * Просит кошелёк сжечь `amount` монеты `coin` с его адреса (BURN_TOKEN) и ждёт
+   * результат. Как и перевод, возвращает `signedTxHex` — в сеть отправляет сайт.
+   *
+   * Кошелёк, который ещё не знает метод `burnToken`, ответит `wallet_bad_request`.
+   */
+  async burnToken(
+    params: BurnTokenParams,
+    options: WaitForSignatureOptions & RequestTransactionOptions = {},
+  ): Promise<string> {
+    const reqId = await this.requestBurnToken(params, options);
+    return this.waitForSignature(reqId, options);
+  }
+
+  /** То же без ожидания: reqId сразу, результат — через waitForSignature(reqId). */
+  async requestBurnToken(params: BurnTokenParams, options: RequestTransactionOptions = {}): Promise<string> {
+    this.assertOpen();
+    return this.postRequest(buildBurnTokenRequest(params), options);
+  }
+
+  /** Шифрует уже проверенный запрос, ставит его в очередь relay и запоминает его дедлайн. */
+  private async postRequest(
+    request: SendTransactionRequest | BurnTokenRequest,
+    options: RequestTransactionOptions,
+  ): Promise<string> {
     const aesKey = this.requireChannelKey();
 
     const { reqId, expiresAt } = await this.relay<{ reqId: string; status: SigningStatus; expiresAt: string }>(
