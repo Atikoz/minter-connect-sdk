@@ -660,12 +660,3 @@ npm run fixtures:relay # перегенерировать test/fixtures/relay-ve
 примитивами relay, если рядом есть чекаут `../minterWallet/minter-backend` (или
 `MINTER_BACKEND_DIR`). Векторы перегенерируйте только вместе с изменением
 контракта на бэкенде.
-
-Ручной e2e (relay в dev-режиме, `WEBHOOK_ALLOW_PRIVATE_NETWORK=true`: manifest
-скрипт раздаёт сам с `http://localhost:5179`):
-
-```bash
-cd ../minterWallet/minter-backend && docker compose up -d && npm run migrate:up && npm run dev
-# в другом терминале:
-RELAY_URL=http://localhost:3000 npm run test:e2e
-```
