@@ -47,7 +47,7 @@ npm install git+ssh://git@github.com/Atikoz/minter-connect-sdk.git#v2.3.0
 import { MinterConnectClient, MinterConnectError } from 'minter-connect-sdk';
 
 const client = new MinterConnectClient({
-  relayUrl: 'https://relay.example.com',
+  relayUrl: 'https://minter-relay.bazer-p2p-loans.com',
   manifestUrl: 'https://dex.example/minter-connect-manifest.json',
   walletAppLink: 'https://t.me/MinterWalletBot/app', // Direct Link Mini App из BotFather
 });
@@ -160,7 +160,7 @@ SDK гарантирует, что подключение настоящее: п
 
 | Поле | Тип | Обязательное | Описание |
 |---|---|---|---|
-| `relayUrl` | `string` | да | URL relay-сервера |
+| `relayUrl` | `string` | да | URL relay-сервера: `https://minter-relay.bazer-p2p-loans.com`. Один для всех интеграций — тот же relay, к которому подключён кошелёк |
 | `manifestUrl` | `string` | да | https-адрес manifest сайта |
 | `walletAppLink` | `string` | да | Direct Link Mini App кошелька (`https://t.me/<Bot>/app`), без query |
 | `domain` | `string` | нет | Собственный домен сайта для проверки handshake. По умолчанию host из `manifestUrl`; другое значение сразу даёт `invalid_request`, потому что такая подпись не прошла бы никогда |
@@ -602,7 +602,7 @@ if (raw) {
 
 ```bash
 PUBLIC_URL=https://<публичный https-адрес этого сервера> \
-RELAY_URL=https://<relay, которым пользуется кошелёк> \
+RELAY_URL=https://minter-relay.bazer-p2p-loans.com \
 WALLET_APP_LINK=https://t.me/<Bot>/app \
 MINTER_NODE_URL=https://<node>/v2 \
 npm run demo   # слушает PORT=8787
